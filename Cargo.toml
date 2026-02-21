@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ramseynet-types",
+    "crates/ramseynet-graph",
+    "crates/ramseynet-verifier",
+    "crates/ramseynet-ledger",
+    "crates/ramseynet-server",
+    "crates/ramseynet-search",
+]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+base64 = "0.22"
+thiserror = "2"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+ed25519-dalek = { version = "2", features = ["serde"] }
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"

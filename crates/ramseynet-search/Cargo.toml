@@ -1,0 +1,15 @@
+[package]
+name = "ramseynet-search"
+version = "0.1.0"
+edition = "2021"
+description = "Ramsey graph search heuristics and worker logic"
+license = "MIT"
+
+[dependencies]
+ramseynet-types = { path = "../ramseynet-types" }
+ramseynet-graph = { path = "../ramseynet-graph" }
+ramseynet-verifier = { path = "../ramseynet-verifier" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }

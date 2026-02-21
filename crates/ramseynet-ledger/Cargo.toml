@@ -1,0 +1,15 @@
+[package]
+name = "ramseynet-ledger"
+version = "0.1.0"
+edition = "2021"
+description = "Local SQLite ledger for RamseyNet transactions and state"
+license = "MIT"
+
+[dependencies]
+ramseynet-types = { path = "../ramseynet-types" }
+ramseynet-graph = { path = "../ramseynet-graph" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }

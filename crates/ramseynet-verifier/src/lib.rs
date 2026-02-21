@@ -1,0 +1,96 @@
+pub mod clique;
+pub mod types;
+
+use ramseynet_graph::AdjacencyMatrix;
+use ramseynet_types::{GraphCid, Verdict};
+
+pub use types::{VerifyRequest, VerifyResponse, VerifyResult};
+
+/// Core Ramsey verification: check that omega(G) < k AND alpha(G) < ell.
+///
+/// Returns `Accepted` if the graph has no k-clique and no ell-independent-set.
+/// Returns `Rejected` with a canonical witness (lexicographically smallest violating set).
+pub fn verify_ramsey(adj: &AdjacencyMatrix, k: u32, ell: u32, cid: &GraphCid) -> VerifyResult {
+    // Check for k-clique in G
+    if let Some(witness) = clique::find_clique_witness(adj, k) {
+        return VerifyResult {
+            verdict: Verdict::Rejected,
+            graph_cid: cid.clone(),
+            reason: Some("clique_found".into()),
+            witness: Some(witness),
+        };
+    }
+
+    // Check for ell-independent-set = ell-clique in complement
+    let comp = adj.complement();
+    if let Some(witness) = clique::find_clique_witness(&comp, ell) {
+        return VerifyResult {
+            verdict: Verdict::Rejected,
+            graph_cid: cid.clone(),
+            reason: Some("independent_set_found".into()),
+            witness: Some(witness),
+        };
+    }
+
+    VerifyResult {
+        verdict: Verdict::Accepted,
+        graph_cid: cid.clone(),
+        reason: None,
+        witness: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ramseynet_graph::compute_cid;
+
+    /// C5 (5-cycle) should be accepted for R(3,3): omega=2, alpha=2.
+    #[test]
+    fn c5_accepted_for_r33() {
+        let mut g = AdjacencyMatrix::new(5);
+        // 5-cycle: 0-1-2-3-4-0
+        g.set_edge(0, 1, true);
+        g.set_edge(1, 2, true);
+        g.set_edge(2, 3, true);
+        g.set_edge(3, 4, true);
+        g.set_edge(4, 0, true);
+
+        let cid = compute_cid(&g);
+        let result = verify_ramsey(&g, 3, 3, &cid);
+        assert_eq!(result.verdict, Verdict::Accepted);
+        assert!(result.witness.is_none());
+    }
+
+    /// K5 (complete graph on 5 vertices) should be rejected for R(3,3): has 3-clique.
+    #[test]
+    fn k5_rejected_for_r33_clique() {
+        let mut g = AdjacencyMatrix::new(5);
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                g.set_edge(i, j, true);
+            }
+        }
+        let cid = compute_cid(&g);
+        let result = verify_ramsey(&g, 3, 3, &cid);
+        assert_eq!(result.verdict, Verdict::Rejected);
+        assert_eq!(result.reason.as_deref(), Some("clique_found"));
+        let witness = result.witness.unwrap();
+        assert_eq!(witness.len(), 3);
+        // Witness should be lex-smallest: [0, 1, 2]
+        assert_eq!(witness, vec![0, 1, 2]);
+    }
+
+    /// Empty graph on 5 vertices should be rejected for R(3,3): has 3-independent-set.
+    #[test]
+    fn empty_5_rejected_for_r33_independent_set() {
+        let g = AdjacencyMatrix::new(5);
+        let cid = compute_cid(&g);
+        let result = verify_ramsey(&g, 3, 3, &cid);
+        assert_eq!(result.verdict, Verdict::Rejected);
+        assert_eq!(result.reason.as_deref(), Some("independent_set_found"));
+        let witness = result.witness.unwrap();
+        assert_eq!(witness.len(), 3);
+        assert_eq!(witness, vec![0, 1, 2]);
+    }
+}

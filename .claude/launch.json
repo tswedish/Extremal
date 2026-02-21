@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ramseynet-server",
+      "runtimeExecutable": "C:\\Users\\trist\\.cargo\\bin\\cargo.exe",
+      "runtimeArgs": ["run", "-p", "ramseynet-server", "--", "--port", "3001"],
+      "port": 3001
+    },
+    {
+      "name": "web-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["web/node_modules/vite/bin/vite.js", "dev", "--config", "web/vite.config.ts", "--port", "5173"],
+      "port": 5173
+    }
+  ]
+}

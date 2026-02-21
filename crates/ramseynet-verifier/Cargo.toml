@@ -1,0 +1,17 @@
+[package]
+name = "ramseynet-verifier"
+version = "0.1.0"
+edition = "2021"
+description = "Ramsey graph verifier (clique/independent-set detection) with OVWC-1 interface"
+license = "MIT"
+
+[dependencies]
+ramseynet-types = { path = "../ramseynet-types" }
+ramseynet-graph = { path = "../ramseynet-graph" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[[bin]]
+name = "ovwc1"
+path = "src/ovwc.rs"
