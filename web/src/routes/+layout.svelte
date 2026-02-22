@@ -10,6 +10,7 @@
 			<a href="/" class="logo">RamseyNet</a>
 			<div class="nav-links">
 				<a href="/challenges">Challenges</a>
+				<a href="/records">Records</a>
 				<a href="/submit">Submit</a>
 			</div>
 		</nav>

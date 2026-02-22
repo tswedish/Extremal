@@ -47,7 +47,7 @@ Rust workspace (`crates/`) + SvelteKit 2 (`web/`).
 | `rgxf.ts` | `web/src/lib/rgxf.ts` | Client-side RGXF decoder (base64 → adjacency) |
 | `events.svelte.ts` | `web/src/lib/stores/events.svelte.ts` | WebSocket store with auto-reconnect |
 
-**Routes:** `/` (homepage), `/challenges` (list), `/challenges/[id]` (detail + viz + submit), `/submit` (standalone)
+**Routes:** `/` (homepage), `/challenges` (list), `/challenges/[id]` (detail + viz + submit), `/records` (best-known), `/submit` (standalone)
 
 ## Server API
 

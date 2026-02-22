@@ -47,7 +47,7 @@
 	<div class="card">
 		<h2>Records</h2>
 		<p>Track the evolving frontier of best-known Ramsey numbers.</p>
-		<a href="/challenges">View records</a>
+		<a href="/records">View records</a>
 	</div>
 </div>
 
