@@ -1,11 +1,14 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
 	import { connect, disconnect, getEvents, isConnected } from '$lib/stores/events.svelte';
 
 	let { maxEvents = 20 }: { maxEvents?: number } = $props();
 
-	onMount(() => connect());
-	onDestroy(() => disconnect());
+	// Use $effect with cleanup instead of onMount/onDestroy — required for
+	// reliable lifecycle in Svelte 5 runes-mode components with SvelteKit navigation.
+	$effect(() => {
+		connect();
+		return () => disconnect();
+	});
 
 	const events = $derived(getEvents().slice(0, maxEvents));
 	const connected = $derived(isConnected());

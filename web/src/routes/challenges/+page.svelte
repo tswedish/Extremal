@@ -11,17 +11,21 @@
 	);
 
 	$effect(() => {
+		let cancelled = false;
 		Promise.all([getChallenges(), getRecords()])
 			.then(([c, r]) => {
+				if (cancelled) return;
 				challenges = c;
 				records = r;
 			})
 			.catch((e) => {
+				if (cancelled) return;
 				error = e instanceof Error ? e.message : 'Failed to load';
 			})
 			.finally(() => {
-				loading = false;
+				if (!cancelled) loading = false;
 			});
+		return () => { cancelled = true; };
 	});
 </script>
 
