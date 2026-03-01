@@ -51,6 +51,14 @@ struct Cli {
     /// Port for live visualization web server
     #[arg(long)]
     viz_port: Option<u16>,
+
+    /// Disable backoff delay between failed search rounds
+    #[arg(long)]
+    no_backoff: bool,
+
+    /// Offline mode: search continuously without a server
+    #[arg(long)]
+    offline: bool,
 }
 
 #[tokio::main]
@@ -95,10 +103,16 @@ async fn main() -> Result<()> {
         other => anyhow::bail!("unknown strategy: {other} (use greedy, local, annealing, or all)"),
     };
 
+    if cli.offline && cli.start_n.is_none() {
+        anyhow::bail!("--offline requires --start-n to set the target vertex count");
+    }
+
     let config = WorkerConfig {
         challenge_id: cli.challenge,
         start_n: cli.start_n,
         max_iters: cli.max_iters,
+        no_backoff: cli.no_backoff,
+        offline: cli.offline,
     };
 
     // Graceful shutdown on Ctrl+C

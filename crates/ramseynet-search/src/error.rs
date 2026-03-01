@@ -13,4 +13,7 @@ pub enum SearchError {
 
     #[error("shutdown signal received")]
     Shutdown,
+
+    #[error("{0}")]
+    Other(String),
 }

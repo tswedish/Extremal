@@ -22,9 +22,10 @@ Other commands: `clippy`, `build`, `web` (production build).
 ./run search --challenge ramsey:3:3:v1          # all strategies, default server
 ./run search --challenge ramsey:3:3:v1 --strategy greedy --start-n 4
 ./run search --challenge ramsey:3:4:v1 --server http://remote:3001 --max-iters 50000
+./run search --challenge ramsey:3:3:v1 --offline --start-n 5 --viz-port 8080  # no server needed
 ```
 
-Options: `--strategy {greedy|local|annealing|all}`, `--start-n N`, `--max-iters N`, `--tabu-tenure N`, `--initial-temp F`, `--cooling-rate F`.
+Options: `--strategy {greedy|local|annealing|all}`, `--start-n N`, `--max-iters N`, `--tabu-tenure N`, `--initial-temp F`, `--cooling-rate F`, `--viz-port PORT`, `--offline`, `--no-backoff`.
 
 ## Architecture
 
