@@ -528,9 +528,8 @@ function handleSnapshot(snap) {
 }
 
 function handleLeaderboard(msg) {
-  // Full board replacement (on reconnect)
-  // msg is an array of LeaderboardEntry (the serde Leaderboard variant wraps Vec directly)
-  const entries = Array.isArray(msg) ? msg : (msg.entries || []);
+  // Full board replacement — server sends {type: "leaderboard", entries: [...]}
+  const entries = msg.entries || [];
 
   // Clear state
   discoveryMap.clear();

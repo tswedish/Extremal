@@ -69,7 +69,7 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
     let lb_rx = state.viz.subscribe_leaderboard();
     let current_lb = lb_rx.borrow().clone();
     if !current_lb.is_empty() {
-        let lb_msg = VizMessage::Leaderboard(current_lb);
+        let lb_msg = VizMessage::Leaderboard { entries: current_lb };
         if send_json(&mut socket, &lb_msg).await.is_err() {
             return;
         }
@@ -95,7 +95,7 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
                     break; // channel closed
                 }
                 let entries = lb_rx.borrow_and_update().clone();
-                let msg = VizMessage::Leaderboard(entries);
+                let msg = VizMessage::Leaderboard { entries };
                 if send_json(&mut socket, &msg).await.is_err() {
                     break;
                 }

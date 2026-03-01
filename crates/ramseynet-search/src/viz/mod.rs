@@ -118,7 +118,7 @@ pub enum VizMessage {
     #[serde(rename = "snapshot")]
     Snapshot(SearchSnapshot),
     #[serde(rename = "leaderboard")]
-    Leaderboard(Vec<LeaderboardEntry>),
+    Leaderboard { entries: Vec<LeaderboardEntry> },
 }
 
 /// Handle that search threads use to push updates to the viz server.
