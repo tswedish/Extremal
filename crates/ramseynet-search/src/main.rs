@@ -8,6 +8,7 @@ use tracing::info;
 use ramseynet_search::annealing::AnnealingSearcher;
 use ramseynet_search::client::ServerClient;
 use ramseynet_search::greedy::GreedySearcher;
+use ramseynet_search::init::InitStrategy;
 use ramseynet_search::local_search::LocalSearcher;
 use ramseynet_search::search::Searcher;
 use ramseynet_search::viz::VizHandle;
@@ -59,6 +60,10 @@ struct Cli {
     /// Offline mode: search continuously without a server
     #[arg(long)]
     offline: bool,
+
+    /// Graph initialization: paley (default), perturbed-paley, random, balanced
+    #[arg(long, default_value = "perturbed-paley")]
+    init: String,
 }
 
 #[tokio::main]
@@ -81,23 +86,35 @@ async fn main() -> Result<()> {
 
     let client = ServerClient::new(&cli.server);
 
+    let init_strategy = match cli.init.as_str() {
+        "paley" => InitStrategy::Paley,
+        "perturbed-paley" => InitStrategy::PerturbedPaley { flip_fraction: 0.05 },
+        "random" => InitStrategy::Random,
+        "balanced" => InitStrategy::BalancedRandom { density: 0.5 },
+        other => anyhow::bail!("unknown init strategy: {other} (use paley, perturbed-paley, random, balanced)"),
+    };
+
     let searchers: Vec<Box<dyn Searcher>> = match cli.strategy.as_str() {
         "greedy" => vec![Box::new(GreedySearcher)],
         "local" => vec![Box::new(LocalSearcher {
             tabu_tenure: cli.tabu_tenure,
+            init_strategy: init_strategy.clone(),
         })],
         "annealing" => vec![Box::new(AnnealingSearcher {
             initial_temp: cli.initial_temp,
             cooling_rate: cli.cooling_rate,
+            init_strategy: init_strategy.clone(),
         })],
         "all" => vec![
             Box::new(GreedySearcher),
             Box::new(LocalSearcher {
                 tabu_tenure: cli.tabu_tenure,
+                init_strategy: init_strategy.clone(),
             }),
             Box::new(AnnealingSearcher {
                 initial_temp: cli.initial_temp,
                 cooling_rate: cli.cooling_rate,
+                init_strategy,
             }),
         ],
         other => anyhow::bail!("unknown strategy: {other} (use greedy, local, annealing, or all)"),

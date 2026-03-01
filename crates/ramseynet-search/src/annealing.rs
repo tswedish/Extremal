@@ -4,41 +4,72 @@ use ramseynet_graph::{compute_cid, AdjacencyMatrix};
 use ramseynet_types::Verdict;
 use ramseynet_verifier::verify_ramsey;
 
+use crate::init::{init_graph, InitStrategy};
 use crate::search::{SearchResult, Searcher};
 use crate::viz::SearchObserver;
 
 /// Simulated annealing: random edge flips with a cooling schedule.
 /// Accepts worsening moves with probability exp(-delta/temp).
+/// Auto-tunes cooling rate so temperature reaches ~0.01 at max_iters,
+/// and restarts from a fresh graph when frozen with no improvement.
 pub struct AnnealingSearcher {
     pub initial_temp: f64,
     pub cooling_rate: f64,
+    pub init_strategy: InitStrategy,
 }
+
+/// Minimum temperature before triggering a restart.
+const MIN_TEMP: f64 = 0.01;
+
+/// Iterations at min temp without improvement before restarting.
+const RESTART_PATIENCE: u64 = 1000;
 
 impl Default for AnnealingSearcher {
     fn default() -> Self {
         Self {
             initial_temp: 2.0,
             cooling_rate: 0.9995,
+            init_strategy: InitStrategy::default(),
         }
     }
 }
 
-/// Count the number of violations (clique + independent set witnesses).
-/// Returns 0 if the graph is Ramsey-valid.
+/// Count violations more granularly: check for both k-clique and ell-independent
+/// set, summing witness sizes from both. This gives the optimizer a meaningful
+/// gradient to follow.
 fn violation_score(graph: &AdjacencyMatrix, k: u32, ell: u32) -> u32 {
     let cid = compute_cid(graph);
+
+    let mut score = 0u32;
+
+    // Check for k-clique in G
     let result = verify_ramsey(graph, k, ell, &cid);
-    match result.verdict {
-        Verdict::Accepted => 0,
-        Verdict::Rejected => {
-            // Count both clique and independent set violations
-            let mut score = 0;
-            if let Some(ref w) = result.witness {
-                score += w.len() as u32;
+    if result.verdict == Verdict::Accepted {
+        return 0;
+    }
+
+    if let Some(ref w) = result.witness {
+        score += w.len() as u32;
+    }
+
+    // Also check the other direction to count both types of violations.
+    // verify_ramsey stops at the first violation, so check the complement too.
+    let comp = graph.complement();
+    if let Some(ref reason) = result.reason {
+        if reason == "clique_found" {
+            // Already counted clique; now check for independent set too
+            if ramseynet_verifier::clique::find_clique_witness(&comp, ell).is_some() {
+                score += ell;
             }
-            score.max(1)
+        } else {
+            // Already counted indep set; now check for clique too
+            if ramseynet_verifier::clique::find_clique_witness(graph, k).is_some() {
+                score += k;
+            }
         }
     }
+
+    score.max(1)
 }
 
 impl Searcher for AnnealingSearcher {
@@ -60,16 +91,16 @@ impl Searcher for AnnealingSearcher {
             };
         }
 
-        // Start with a random graph
-        let mut graph = AdjacencyMatrix::new(n);
-        for i in 0..n {
-            for j in (i + 1)..n {
-                if rng.gen_bool(0.5) {
-                    graph.set_edge(i, j, true);
-                }
-            }
-        }
+        // Auto-tune cooling rate so temp reaches MIN_TEMP at max_iters.
+        // cooling_rate^max_iters = MIN_TEMP / initial_temp
+        // => cooling_rate = (MIN_TEMP / initial_temp)^(1/max_iters)
+        let cooling_rate = if self.cooling_rate > 0.0 && max_iters > 0 {
+            (MIN_TEMP / self.initial_temp).powf(1.0 / max_iters as f64)
+        } else {
+            self.cooling_rate
+        };
 
+        let mut graph = init_graph(n, &self.init_strategy, rng);
         let mut current_score = violation_score(&graph, k, ell);
         if current_score == 0 {
             return SearchResult {
@@ -82,6 +113,7 @@ impl Searcher for AnnealingSearcher {
         let mut best_graph = graph.clone();
         let mut best_score = current_score;
         let mut temp = self.initial_temp;
+        let mut iters_since_improvement = 0u64;
 
         for iter in 0..max_iters {
             if iter % 100 == 0 {
@@ -89,6 +121,23 @@ impl Searcher for AnnealingSearcher {
                     &graph, n, k, ell, "annealing",
                     iter, max_iters, false, current_score,
                 );
+            }
+
+            // Restart if frozen and stagnated
+            if temp <= MIN_TEMP && iters_since_improvement >= RESTART_PATIENCE {
+                graph = init_graph(n, &self.init_strategy, rng);
+                current_score = violation_score(&graph, k, ell);
+                if current_score == 0 {
+                    observer.on_progress(&graph, n, k, ell, "annealing", iter + 1, max_iters, true, 0);
+                    return SearchResult {
+                        graph,
+                        valid: true,
+                        iterations: iter + 1,
+                    };
+                }
+                temp = self.initial_temp;
+                iters_since_improvement = 0;
+                continue;
             }
 
             // Random edge flip
@@ -122,13 +171,17 @@ impl Searcher for AnnealingSearcher {
                 if new_score < best_score {
                     best_graph = graph.clone();
                     best_score = new_score;
+                    iters_since_improvement = 0;
+                } else {
+                    iters_since_improvement += 1;
                 }
             } else {
                 // Reject — undo
                 graph.set_edge(i, j, old_val);
+                iters_since_improvement += 1;
             }
 
-            temp *= self.cooling_rate;
+            temp *= cooling_rate;
         }
 
         SearchResult {

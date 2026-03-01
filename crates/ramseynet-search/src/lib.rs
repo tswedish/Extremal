@@ -7,6 +7,7 @@ pub mod annealing;
 pub mod client;
 pub mod error;
 pub mod greedy;
+pub mod init;
 pub mod local_search;
 pub mod search;
 pub mod viz;

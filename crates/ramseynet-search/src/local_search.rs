@@ -4,21 +4,39 @@ use rand::rngs::SmallRng;
 use rand::Rng;
 use ramseynet_graph::{compute_cid, AdjacencyMatrix};
 use ramseynet_types::Verdict;
+use ramseynet_verifier::clique::{count_cliques, find_clique_witness};
 use ramseynet_verifier::verify_ramsey;
 
+use crate::init::{init_graph, InitStrategy};
 use crate::search::{SearchResult, Searcher};
 use crate::viz::SearchObserver;
 
-/// Local search with tabu: start from a random graph, use witness-directed
-/// edge flips to repair violations, with a tabu list to avoid cycles.
+/// Local search with tabu and restarts: start from a random graph, use
+/// witness-directed edge flips to repair violations, with a tabu list to
+/// avoid cycles. Restarts from a fresh random graph when stagnated.
 pub struct LocalSearcher {
     pub tabu_tenure: u32,
+    pub init_strategy: InitStrategy,
 }
+
+/// Number of iterations without improvement before restarting.
+const RESTART_PATIENCE: u64 = 5000;
+
+/// How often to recompute the full violation score (expensive).
+const FULL_SCORE_INTERVAL: u64 = 500;
 
 impl Default for LocalSearcher {
     fn default() -> Self {
-        Self { tabu_tenure: 10 }
+        Self {
+            tabu_tenure: 10,
+            init_strategy: InitStrategy::default(),
+        }
     }
+}
+
+/// Count total violations: number of k-cliques + number of ell-independent sets.
+fn violation_count(graph: &AdjacencyMatrix, complement: &AdjacencyMatrix, k: u32, ell: u32) -> u64 {
+    count_cliques(graph, k) + count_cliques(complement, ell)
 }
 
 impl Searcher for LocalSearcher {
@@ -31,51 +49,85 @@ impl Searcher for LocalSearcher {
         rng: &mut SmallRng,
         observer: &dyn SearchObserver,
     ) -> SearchResult {
-        // Start with a random graph (each edge present with probability 0.5)
-        let mut graph = random_graph(n, rng);
+        let mut graph = init_graph(n, &self.init_strategy, rng);
+        let mut complement = graph.complement();
         let mut tabu: HashSet<(u32, u32)> = HashSet::new();
         let mut tabu_queue: Vec<(u32, u32)> = Vec::new();
 
-        for iter in 0..max_iters {
-            let cid = compute_cid(&graph);
-            let result = verify_ramsey(&graph, k, ell, &cid);
+        let mut best_score = violation_count(&graph, &complement, k, ell);
+        let mut iters_since_improvement = 0u64;
 
-            if result.verdict == Verdict::Accepted {
+        for iter in 0..max_iters {
+            // Periodically compute full violation score for stagnation detection
+            if iter % FULL_SCORE_INTERVAL == 0 {
+                let score = violation_count(&graph, &complement, k, ell);
+                if score == 0 {
+                    observer.on_progress(&graph, n, k, ell, "local", iter + 1, max_iters, true, 0);
+                    return SearchResult {
+                        graph,
+                        valid: true,
+                        iterations: iter + 1,
+                    };
+                }
+                if score < best_score {
+                    best_score = score;
+                    iters_since_improvement = 0;
+                }
+
+                observer.on_progress(
+                    &graph, n, k, ell, "local",
+                    iter, max_iters, false, score as u32,
+                );
+            }
+
+            iters_since_improvement += 1;
+
+            // Restart if stagnated
+            if iters_since_improvement >= RESTART_PATIENCE {
+                graph = init_graph(n, &self.init_strategy, rng);
+                complement = graph.complement();
+                tabu.clear();
+                tabu_queue.clear();
+                best_score = violation_count(&graph, &complement, k, ell);
+                iters_since_improvement = 0;
+                continue;
+            }
+
+            // Quick check: find one witness to direct the flip.
+            // Use maintained complement to avoid recomputing it each iteration.
+            let clique_witness = find_clique_witness(&graph, k);
+            let (witness, is_clique) = if let Some(w) = clique_witness {
+                (w, true)
+            } else if let Some(w) = find_clique_witness(&complement, ell) {
+                (w, false)
+            } else {
+                // No violations found — graph is valid!
                 observer.on_progress(&graph, n, k, ell, "local", iter + 1, max_iters, true, 0);
                 return SearchResult {
                     graph,
                     valid: true,
                     iterations: iter + 1,
                 };
-            }
-
-            let witness_len = result.witness.as_ref().map(|w| w.len() as u32).unwrap_or(1);
-
-            if iter % 100 == 0 {
-                observer.on_progress(
-                    &graph, n, k, ell, "local",
-                    iter, max_iters, false, witness_len,
-                );
-            }
+            };
 
             // Use witness to guide repair
-            if let Some(witness) = result.witness {
-                let flipped = witness_directed_flip(&mut graph, &witness, &result.reason, &tabu, n, rng);
-                if let Some(edge) = flipped {
-                    // Add to tabu list
-                    tabu.insert(edge);
-                    tabu_queue.push(edge);
-                    // Expire old tabu entries
-                    while tabu_queue.len() > self.tabu_tenure as usize {
-                        let old = tabu_queue.remove(0);
-                        tabu.remove(&old);
-                    }
-                } else {
-                    // No non-tabu flip available — do a random flip
-                    random_flip(&mut graph, n, rng);
+            let flipped = witness_directed_flip(&mut graph, &witness, is_clique, &tabu, n, rng);
+            if let Some((ei, ej)) = flipped {
+                // Maintain complement incrementally
+                let comp_val = complement.edge(ei, ej);
+                complement.set_edge(ei, ej, !comp_val);
+
+                tabu.insert((ei, ej));
+                tabu_queue.push((ei, ej));
+                while tabu_queue.len() > self.tabu_tenure as usize {
+                    let old = tabu_queue.remove(0);
+                    tabu.remove(&old);
                 }
             } else {
-                random_flip(&mut graph, n, rng);
+                let (ri, rj) = random_flip(&mut graph, n, rng);
+                // Maintain complement incrementally
+                let comp_val = complement.edge(ri, rj);
+                complement.set_edge(ri, rj, !comp_val);
             }
         }
 
@@ -96,32 +148,17 @@ impl Searcher for LocalSearcher {
     }
 }
 
-fn random_graph(n: u32, rng: &mut SmallRng) -> AdjacencyMatrix {
-    let mut g = AdjacencyMatrix::new(n);
-    for i in 0..n {
-        for j in (i + 1)..n {
-            if rng.gen_bool(0.5) {
-                g.set_edge(i, j, true);
-            }
-        }
-    }
-    g
-}
-
 /// Flip an edge incident to a witness vertex to try to break the violation.
 fn witness_directed_flip(
     graph: &mut AdjacencyMatrix,
     witness: &[u32],
-    reason: &Option<String>,
+    is_clique: bool,
     tabu: &HashSet<(u32, u32)>,
     n: u32,
     rng: &mut SmallRng,
 ) -> Option<(u32, u32)> {
-    let is_clique = reason.as_deref() == Some("clique_found");
-
     // For a clique violation: try removing an edge between witness vertices
     // For an independent set violation: try adding an edge between witness vertices
-    // In both cases, we flip edges that match the violation type
     let mut candidates: Vec<(u32, u32)> = Vec::new();
     for (idx, &v) in witness.iter().enumerate() {
         for &w in &witness[idx + 1..] {
@@ -129,7 +166,6 @@ fn witness_directed_flip(
             if tabu.contains(&(lo, hi)) {
                 continue;
             }
-            // For cliques: flip present edges; for indep sets: flip absent edges
             let dominated = if is_clique { graph.edge(v, w) } else { !graph.edge(v, w) };
             if dominated {
                 candidates.push((lo, hi));
@@ -164,17 +200,20 @@ fn witness_directed_flip(
     Some((i, j))
 }
 
-fn random_flip(graph: &mut AdjacencyMatrix, n: u32, rng: &mut SmallRng) {
+/// Flip a random edge and return the edge that was flipped.
+fn random_flip(graph: &mut AdjacencyMatrix, n: u32, rng: &mut SmallRng) -> (u32, u32) {
     if n < 2 {
-        return;
+        return (0, 0);
     }
     let i = rng.gen_range(0..n);
     let mut j = rng.gen_range(0..n - 1);
     if j >= i {
         j += 1;
     }
-    let current = graph.edge(i, j);
-    graph.set_edge(i, j, !current);
+    let (lo, hi) = if i < j { (i, j) } else { (j, i) };
+    let current = graph.edge(lo, hi);
+    graph.set_edge(lo, hi, !current);
+    (lo, hi)
 }
 
 #[cfg(test)]
