@@ -5,6 +5,7 @@ use ramseynet_types::Verdict;
 use ramseynet_verifier::verify_ramsey;
 
 use crate::search::{SearchResult, Searcher};
+use crate::viz::SearchObserver;
 
 /// Simulated annealing: random edge flips with a cooling schedule.
 /// Accepts worsening moves with probability exp(-delta/temp).
@@ -41,7 +42,15 @@ fn violation_score(graph: &AdjacencyMatrix, k: u32, ell: u32) -> u32 {
 }
 
 impl Searcher for AnnealingSearcher {
-    fn search(&self, n: u32, k: u32, ell: u32, max_iters: u64, rng: &mut SmallRng) -> SearchResult {
+    fn search(
+        &self,
+        n: u32,
+        k: u32,
+        ell: u32,
+        max_iters: u64,
+        rng: &mut SmallRng,
+        observer: &dyn SearchObserver,
+    ) -> SearchResult {
         if n < 2 {
             let g = AdjacencyMatrix::new(n);
             return SearchResult {
@@ -75,6 +84,13 @@ impl Searcher for AnnealingSearcher {
         let mut temp = self.initial_temp;
 
         for iter in 0..max_iters {
+            if iter % 100 == 0 {
+                observer.on_progress(
+                    &graph, n, k, ell, "annealing",
+                    iter, max_iters, false, current_score,
+                );
+            }
+
             // Random edge flip
             let i = rng.gen_range(0..n);
             let mut j = rng.gen_range(0..n - 1);
@@ -88,6 +104,10 @@ impl Searcher for AnnealingSearcher {
             let new_score = violation_score(&graph, k, ell);
 
             if new_score == 0 {
+                observer.on_progress(
+                    &graph, n, k, ell, "annealing",
+                    iter + 1, max_iters, true, 0,
+                );
                 return SearchResult {
                     graph,
                     valid: true,
@@ -126,13 +146,14 @@ impl Searcher for AnnealingSearcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::viz::NoOpObserver;
     use rand::SeedableRng;
 
     #[test]
     fn annealing_finds_valid_r33_n5() {
         let searcher = AnnealingSearcher::default();
         let mut rng = SmallRng::seed_from_u64(99);
-        let result = searcher.search(5, 3, 3, 50_000, &mut rng);
+        let result = searcher.search(5, 3, 3, 50_000, &mut rng, &NoOpObserver);
         assert!(result.valid, "annealing should find a valid R(3,3) graph on 5 vertices");
         assert_eq!(result.graph.n(), 5);
     }
@@ -141,7 +162,7 @@ mod tests {
     fn annealing_fails_r33_n6() {
         let searcher = AnnealingSearcher::default();
         let mut rng = SmallRng::seed_from_u64(99);
-        let result = searcher.search(6, 3, 3, 10_000, &mut rng);
+        let result = searcher.search(6, 3, 3, 10_000, &mut rng, &NoOpObserver);
         assert!(!result.valid);
     }
 }

@@ -10,6 +10,7 @@ use tracing::{error, info, warn};
 use crate::client::ServerClient;
 use crate::error::SearchError;
 use crate::search::Searcher;
+use crate::viz::{NoOpObserver, VizHandle, VizObserver};
 
 /// Configuration for the worker loop.
 pub struct WorkerConfig {
@@ -24,6 +25,7 @@ pub async fn run_worker(
     searchers: Vec<Box<dyn Searcher>>,
     config: WorkerConfig,
     mut shutdown: watch::Receiver<bool>,
+    viz_handle: Option<Arc<VizHandle>>,
 ) -> Result<(), SearchError> {
     let searchers: Vec<Arc<dyn Searcher>> = searchers.into_iter().map(Arc::from).collect();
     let mut rng = SmallRng::from_entropy();
@@ -73,8 +75,17 @@ pub async fn run_worker(
             let n = target_n;
             let searcher = Arc::clone(searcher);
             let mut search_rng = SmallRng::from_rng(&mut rng).unwrap();
+            let viz = viz_handle.clone();
             let result = tokio::task::spawn_blocking(move || {
-                searcher.search(n, k, ell, max_iters, &mut search_rng)
+                match viz {
+                    Some(ref h) => {
+                        let obs = VizObserver::new(Arc::clone(h));
+                        searcher.search(n, k, ell, max_iters, &mut search_rng, &obs)
+                    }
+                    None => {
+                        searcher.search(n, k, ell, max_iters, &mut search_rng, &NoOpObserver)
+                    }
+                }
             })
             .await
             .unwrap();
@@ -91,6 +102,11 @@ pub async fn run_worker(
                     "found valid graph!"
                 );
 
+                // Pin as valid discovery (not yet known if record)
+                if let Some(ref vh) = viz_handle {
+                    vh.pin_graph(&result.graph, target_n, strategy, result.iterations, false);
+                }
+
                 // Encode and submit
                 let rgxf_json = rgxf::to_json(&result.graph);
                 match client.submit(&config.challenge_id, rgxf_json).await {
@@ -104,6 +120,9 @@ pub async fn run_worker(
                         );
                         if is_record {
                             info!("new record! n={target_n}");
+                            if let Some(ref vh) = viz_handle {
+                                vh.pin_graph(&result.graph, target_n, strategy, result.iterations, true);
+                            }
                         }
                         consecutive_failures = 0;
                         found = true;

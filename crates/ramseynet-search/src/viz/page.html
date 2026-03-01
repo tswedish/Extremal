@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RamseyNet Search Viz</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0f;
+  color: #e0e0e8;
+  font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: #111118;
+  border-bottom: 1px solid #2a2a3a;
+}
+header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #6366f1;
+}
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+.status-dot.connected { background: #22c55e; }
+.status-text {
+  font-size: 12px;
+  color: #8888a0;
+}
+
+.stats-bar {
+  display: flex;
+  gap: 20px;
+  padding: 10px 20px;
+  background: #0e0e16;
+  border-bottom: 1px solid #1a1a2a;
+  flex-wrap: wrap;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stat-label {
+  font-size: 10px;
+  color: #666680;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #c0c0d0;
+}
+.stat-value.highlight { color: #6366f1; }
+.stat-value.valid { color: #22c55e; }
+.stat-value.invalid { color: #ef4444; }
+
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+.matrix-panel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  min-width: 0;
+}
+#matrix-canvas {
+  border-radius: 8px;
+  border: 1px solid #2a2a3a;
+  image-rendering: pixelated;
+}
+
+.pinned-panel {
+  width: 280px;
+  border-left: 1px solid #2a2a3a;
+  background: #0e0e16;
+  display: flex;
+  flex-direction: column;
+}
+.pinned-header {
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #8888a0;
+  border-bottom: 1px solid #1a1a2a;
+}
+.pinned-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.pinned-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  background: #141420;
+  border: 1px solid #1a1a2a;
+}
+.pinned-item.record {
+  border-color: #ca8a04;
+  background: #1a1810;
+}
+.pinned-thumb {
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.pinned-info {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.pinned-info .n-label {
+  font-weight: 600;
+  color: #22c55e;
+}
+.pinned-item.record .n-label {
+  color: #eab308;
+}
+.pinned-info .strategy-label {
+  color: #8888a0;
+}
+.pinned-info .iter-label {
+  color: #666680;
+}
+.empty-msg {
+  padding: 20px;
+  text-align: center;
+  font-size: 12px;
+  color: #444460;
+}
+
+.progress-bar {
+  height: 3px;
+  background: #1a1a2a;
+}
+.progress-fill {
+  height: 100%;
+  background: #6366f1;
+  transition: width 0.1s linear;
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>RamseyNet Search</h1>
+  <div class="status-dot" id="status-dot"></div>
+  <span class="status-text" id="status-text">connecting...</span>
+</header>
+<div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+<div class="stats-bar" id="stats-bar">
+  <div class="stat"><span class="stat-label">Strategy</span><span class="stat-value" id="s-strategy">--</span></div>
+  <div class="stat"><span class="stat-label">n</span><span class="stat-value highlight" id="s-n">--</span></div>
+  <div class="stat"><span class="stat-label">R(k,l)</span><span class="stat-value" id="s-params">--</span></div>
+  <div class="stat"><span class="stat-label">Iteration</span><span class="stat-value" id="s-iter">--</span></div>
+  <div class="stat"><span class="stat-label">Edges</span><span class="stat-value" id="s-edges">--</span></div>
+  <div class="stat"><span class="stat-label">Violations</span><span class="stat-value" id="s-violations">--</span></div>
+  <div class="stat"><span class="stat-label">Valid</span><span class="stat-value" id="s-valid">--</span></div>
+  <div class="stat"><span class="stat-label">Elapsed</span><span class="stat-value" id="s-elapsed">--</span></div>
+</div>
+<div class="main">
+  <div class="matrix-panel">
+    <canvas id="matrix-canvas" width="500" height="500"></canvas>
+  </div>
+  <div class="pinned-panel">
+    <div class="pinned-header">Discoveries <span id="pinned-count">(0)</span></div>
+    <div class="pinned-list" id="pinned-list">
+      <div class="empty-msg">Waiting for valid graphs...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// RGXF decoder (ported from web/src/lib/rgxf.ts)
+function decodeRgxf(rgxf) {
+  const n = rgxf.n;
+  const matrix = Array.from({length: n}, () => new Uint8Array(n));
+  if (n < 2) return matrix;
+  const raw = atob(rgxf.bits_b64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  let bit = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const byteIdx = (bit >> 3);
+      const bitIdx = 7 - (bit & 7);
+      if (byteIdx < bytes.length && (bytes[byteIdx] & (1 << bitIdx))) {
+        matrix[i][j] = 1;
+        matrix[j][i] = 1;
+      }
+      bit++;
+    }
+  }
+  return matrix;
+}
+
+// Canvas matrix renderer (ported from MatrixView.svelte)
+function drawMatrix(canvas, rgxf, size) {
+  const n = rgxf.n;
+  const matrix = decodeRgxf(rgxf);
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = size * dpr;
+  canvas.height = size * dpr;
+  canvas.style.width = size + 'px';
+  canvas.style.height = size + 'px';
+  ctx.scale(dpr, dpr);
+
+  ctx.fillStyle = '#141420';
+  ctx.fillRect(0, 0, size, size);
+  if (n === 0) return;
+
+  const labelSpace = n > 20 ? 16 : 24;
+  const cellArea = size - labelSpace;
+  const cellSize = cellArea / n;
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const x = labelSpace + j * cellSize;
+      const y = labelSpace + i * cellSize;
+      if (i === j) {
+        ctx.fillStyle = '#1a1a2e';
+      } else if (matrix[i][j]) {
+        ctx.fillStyle = '#6366f1';
+      } else {
+        ctx.fillStyle = '#0a0a0f';
+      }
+      ctx.fillRect(x, y, cellSize, cellSize);
+    }
+  }
+
+  ctx.strokeStyle = '#2a2a3a';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= n; i++) {
+    const pos = labelSpace + i * cellSize;
+    ctx.beginPath(); ctx.moveTo(labelSpace, pos); ctx.lineTo(size, pos); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pos, labelSpace); ctx.lineTo(pos, size); ctx.stroke();
+  }
+
+  const fontSize = Math.max(8, Math.min(12, cellSize * 0.6));
+  ctx.font = fontSize + 'px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#8888a0';
+  for (let i = 0; i < n; i++) {
+    const pos = labelSpace + (i + 0.5) * cellSize;
+    ctx.fillText(String(i), pos, labelSpace / 2);
+    ctx.fillText(String(i), labelSpace / 2, pos);
+  }
+}
+
+// Draw small thumbnail for pinned graphs
+function drawThumb(canvas, rgxf, size) {
+  const n = rgxf.n;
+  const matrix = decodeRgxf(rgxf);
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = size * dpr;
+  canvas.height = size * dpr;
+  canvas.style.width = size + 'px';
+  canvas.style.height = size + 'px';
+  ctx.scale(dpr, dpr);
+
+  ctx.fillStyle = '#141420';
+  ctx.fillRect(0, 0, size, size);
+  if (n === 0) return;
+
+  const cellSize = size / n;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue;
+      if (matrix[i][j]) {
+        ctx.fillStyle = '#6366f1';
+        ctx.fillRect(j * cellSize, i * cellSize, cellSize, cellSize);
+      }
+    }
+  }
+}
+
+// State
+const canvas = document.getElementById('matrix-canvas');
+const pinnedList = document.getElementById('pinned-list');
+const pinnedCount = document.getElementById('pinned-count');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const progressFill = document.getElementById('progress-fill');
+let discoveries = 0;
+
+function $(id) { return document.getElementById(id); }
+
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  return m + 'm ' + (s % 60) + 's';
+}
+
+function formatNum(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+// Compute matrix display size
+function matrixSize() {
+  const panel = document.querySelector('.matrix-panel');
+  if (!panel) return 500;
+  return Math.min(panel.clientWidth - 40, panel.clientHeight - 40, 600);
+}
+
+// WebSocket
+let ws;
+let reconnectDelay = 500;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+
+  ws.onopen = () => {
+    statusDot.classList.add('connected');
+    statusText.textContent = 'connected';
+    reconnectDelay = 500;
+  };
+
+  ws.onclose = () => {
+    statusDot.classList.remove('connected');
+    statusText.textContent = 'reconnecting...';
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 1.5, 5000);
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'snapshot') {
+      handleSnapshot(msg);
+    } else if (msg.type === 'pinned') {
+      handlePinned(msg);
+    } else if (msg.type === 'hello') {
+      statusText.textContent = 'connected (v' + msg.version + ')';
+    }
+  };
+}
+
+function handleSnapshot(snap) {
+  // Update stats
+  $('s-strategy').textContent = snap.strategy;
+  $('s-n').textContent = snap.n;
+  $('s-params').textContent = 'R(' + snap.k + ',' + snap.ell + ')';
+  $('s-iter').textContent = formatNum(snap.iteration) + ' / ' + formatNum(snap.max_iters);
+  $('s-edges').textContent = snap.edges;
+
+  const viol = $('s-violations');
+  viol.textContent = snap.violation_score;
+  viol.className = 'stat-value ' + (snap.violation_score === 0 ? 'valid' : 'invalid');
+
+  const valid = $('s-valid');
+  valid.textContent = snap.valid ? 'YES' : 'no';
+  valid.className = 'stat-value ' + (snap.valid ? 'valid' : 'invalid');
+
+  $('s-elapsed').textContent = formatElapsed(snap.elapsed_ms);
+
+  // Progress bar
+  const pct = snap.max_iters > 0 ? (snap.iteration / snap.max_iters) * 100 : 0;
+  progressFill.style.width = Math.min(pct, 100) + '%';
+
+  // Draw matrix
+  const size = matrixSize();
+  drawMatrix(canvas, snap.graph, size);
+}
+
+function handlePinned(pinned) {
+  discoveries++;
+  pinnedCount.textContent = '(' + discoveries + ')';
+
+  // Remove empty message
+  const empty = pinnedList.querySelector('.empty-msg');
+  if (empty) empty.remove();
+
+  const item = document.createElement('div');
+  item.className = 'pinned-item' + (pinned.is_record ? ' record' : '');
+
+  const thumb = document.createElement('canvas');
+  thumb.className = 'pinned-thumb';
+  drawThumb(thumb, pinned.graph, 48);
+
+  const info = document.createElement('div');
+  info.className = 'pinned-info';
+  const badge = pinned.is_record ? ' <span style="color:#eab308">RECORD</span>' : '';
+  info.innerHTML =
+    '<span class="n-label">n=' + pinned.n + '</span>' + badge + '<br>' +
+    '<span class="strategy-label">' + pinned.strategy + '</span> ' +
+    '<span class="iter-label">iter ' + formatNum(pinned.iteration) + '</span><br>' +
+    '<span class="iter-label">' + formatElapsed(pinned.found_at_ms) + '</span>';
+
+  item.appendChild(thumb);
+  item.appendChild(info);
+  pinnedList.prepend(item);
+}
+
+// Handle resize
+window.addEventListener('resize', () => {
+  // Redraw at new size on next snapshot
+});
+
+connect();
+</script>
+</body>
+</html>

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use clap::Parser;
 use tokio::sync::watch;
@@ -8,6 +10,7 @@ use ramseynet_search::client::ServerClient;
 use ramseynet_search::greedy::GreedySearcher;
 use ramseynet_search::local_search::LocalSearcher;
 use ramseynet_search::search::Searcher;
+use ramseynet_search::viz::VizHandle;
 use ramseynet_search::worker::{run_worker, WorkerConfig};
 
 #[derive(Parser)]
@@ -44,6 +47,10 @@ struct Cli {
     /// Cooling rate for simulated annealing
     #[arg(long, default_value = "0.9995")]
     cooling_rate: f64,
+
+    /// Port for live visualization web server
+    #[arg(long)]
+    viz_port: Option<u16>,
 }
 
 #[tokio::main]
@@ -102,7 +109,21 @@ async fn main() -> Result<()> {
         let _ = shutdown_tx.send(true);
     });
 
-    run_worker(client, searchers, config, shutdown_rx).await?;
+    // Start viz server if requested
+    let viz_handle = if let Some(port) = cli.viz_port {
+        let handle = Arc::new(VizHandle::new());
+        let viz_shutdown = shutdown_rx.clone();
+        let viz = Arc::clone(&handle);
+        tokio::spawn(async move {
+            ramseynet_search::viz::server::start_viz_server(port, viz, viz_shutdown).await;
+        });
+        info!("viz server at http://localhost:{port}");
+        Some(handle)
+    } else {
+        None
+    };
+
+    run_worker(client, searchers, config, shutdown_rx, viz_handle).await?;
 
     Ok(())
 }

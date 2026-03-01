@@ -7,6 +7,7 @@ use ramseynet_types::Verdict;
 use ramseynet_verifier::verify_ramsey;
 
 use crate::search::{SearchResult, Searcher};
+use crate::viz::SearchObserver;
 
 /// Local search with tabu: start from a random graph, use witness-directed
 /// edge flips to repair violations, with a tabu list to avoid cycles.
@@ -21,7 +22,15 @@ impl Default for LocalSearcher {
 }
 
 impl Searcher for LocalSearcher {
-    fn search(&self, n: u32, k: u32, ell: u32, max_iters: u64, rng: &mut SmallRng) -> SearchResult {
+    fn search(
+        &self,
+        n: u32,
+        k: u32,
+        ell: u32,
+        max_iters: u64,
+        rng: &mut SmallRng,
+        observer: &dyn SearchObserver,
+    ) -> SearchResult {
         // Start with a random graph (each edge present with probability 0.5)
         let mut graph = random_graph(n, rng);
         let mut tabu: HashSet<(u32, u32)> = HashSet::new();
@@ -32,11 +41,21 @@ impl Searcher for LocalSearcher {
             let result = verify_ramsey(&graph, k, ell, &cid);
 
             if result.verdict == Verdict::Accepted {
+                observer.on_progress(&graph, n, k, ell, "local", iter + 1, max_iters, true, 0);
                 return SearchResult {
                     graph,
                     valid: true,
                     iterations: iter + 1,
                 };
+            }
+
+            let witness_len = result.witness.as_ref().map(|w| w.len() as u32).unwrap_or(1);
+
+            if iter % 100 == 0 {
+                observer.on_progress(
+                    &graph, n, k, ell, "local",
+                    iter, max_iters, false, witness_len,
+                );
             }
 
             // Use witness to guide repair
@@ -161,13 +180,14 @@ fn random_flip(graph: &mut AdjacencyMatrix, n: u32, rng: &mut SmallRng) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::viz::NoOpObserver;
     use rand::SeedableRng;
 
     #[test]
     fn local_search_finds_valid_r33_n5() {
         let searcher = LocalSearcher::default();
         let mut rng = SmallRng::seed_from_u64(123);
-        let result = searcher.search(5, 3, 3, 10_000, &mut rng);
+        let result = searcher.search(5, 3, 3, 10_000, &mut rng, &NoOpObserver);
         assert!(result.valid, "local search should find a valid R(3,3) graph on 5 vertices");
         assert_eq!(result.graph.n(), 5);
     }
@@ -176,7 +196,7 @@ mod tests {
     fn local_search_fails_r33_n6() {
         let searcher = LocalSearcher::default();
         let mut rng = SmallRng::seed_from_u64(123);
-        let result = searcher.search(6, 3, 3, 1_000, &mut rng);
+        let result = searcher.search(6, 3, 3, 1_000, &mut rng, &NoOpObserver);
         assert!(!result.valid);
     }
 }

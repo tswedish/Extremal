@@ -23,3 +23,4 @@ clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 reqwest = { version = "0.12", features = ["json"] }
+axum = { workspace = true }

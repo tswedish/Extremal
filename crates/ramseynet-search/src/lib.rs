@@ -9,6 +9,7 @@ pub mod error;
 pub mod greedy;
 pub mod local_search;
 pub mod search;
+pub mod viz;
 pub mod worker;
 
 pub const SEARCH_VERSION: &str = "0.1.0";
