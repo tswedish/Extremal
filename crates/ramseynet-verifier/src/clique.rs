@@ -102,6 +102,33 @@ fn count_backtrack(adj: &AdjacencyMatrix, current: &mut Vec<u32>, start: u32, k:
     }
 }
 
+/// Clique number omega(G): size of the largest clique.
+///
+/// Iterates k=1,2,3,... calling `find_clique_witness` until it fails.
+/// For Ramsey-relevant graph sizes (n≤20, k≤4) this terminates quickly.
+pub fn max_clique_size(adj: &AdjacencyMatrix) -> u32 {
+    let n = adj.n();
+    if n == 0 {
+        return 0;
+    }
+    let mut k = 1;
+    while k <= n {
+        if find_clique_witness(adj, k + 1).is_none() {
+            return k;
+        }
+        k += 1;
+    }
+    n
+}
+
+/// Find the clique number and count all cliques of that maximum size.
+/// Returns `(omega, count)`.
+pub fn count_max_cliques(adj: &AdjacencyMatrix) -> (u32, u64) {
+    let omega = max_clique_size(adj);
+    let count = count_cliques(adj, omega);
+    (omega, count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,5 +207,62 @@ mod tests {
         }
         let w = find_clique_witness(&g, 5).unwrap();
         assert_eq!(w, vec![0, 1, 2, 3, 4]);
+    }
+
+    /// C5 has omega=2 (edges but no triangles).
+    #[test]
+    fn c5_max_clique_size() {
+        let mut g = AdjacencyMatrix::new(5);
+        for i in 0..5 {
+            g.set_edge(i, (i + 1) % 5, true);
+        }
+        assert_eq!(max_clique_size(&g), 2);
+    }
+
+    /// K5 has omega=5.
+    #[test]
+    fn k5_max_clique_size() {
+        let mut g = AdjacencyMatrix::new(5);
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                g.set_edge(i, j, true);
+            }
+        }
+        assert_eq!(max_clique_size(&g), 5);
+    }
+
+    /// C5 has 5 edges = 5 cliques of size 2.
+    #[test]
+    fn c5_count_max_cliques() {
+        let mut g = AdjacencyMatrix::new(5);
+        for i in 0..5 {
+            g.set_edge(i, (i + 1) % 5, true);
+        }
+        let (omega, count) = count_max_cliques(&g);
+        assert_eq!(omega, 2);
+        assert_eq!(count, 5);
+    }
+
+    /// K5 has exactly 1 clique of size 5.
+    #[test]
+    fn k5_count_max_cliques() {
+        let mut g = AdjacencyMatrix::new(5);
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                g.set_edge(i, j, true);
+            }
+        }
+        let (omega, count) = count_max_cliques(&g);
+        assert_eq!(omega, 5);
+        assert_eq!(count, 1);
+    }
+
+    /// Empty graph has omega=1 (isolated vertices are 1-cliques), count=n.
+    #[test]
+    fn empty_graph_max_clique() {
+        let g = AdjacencyMatrix::new(5);
+        let (omega, count) = count_max_cliques(&g);
+        assert_eq!(omega, 1);
+        assert_eq!(count, 5);
     }
 }

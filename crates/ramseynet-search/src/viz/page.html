@@ -87,7 +87,7 @@ header h1 {
 }
 
 .pinned-panel {
-  width: 280px;
+  width: 320px;
   border-left: 1px solid #2a2a3a;
   background: #0e0e16;
   display: flex;
@@ -114,49 +114,49 @@ header h1 {
   margin-bottom: 4px;
   background: #141420;
   border: 1px solid #1a1a2a;
+  cursor: pointer;
 }
+.pinned-item:hover { background: #1a1a2e; }
 .pinned-item.record {
   border-color: #ca8a04;
   background: #1a1810;
 }
-.pinned-item.rarity-common { border-color: #8888a0; }
-.pinned-item.rarity-uncommon { border-color: #22c55e; }
-.pinned-item.rarity-rare { border-color: #818cf8; }
-.pinned-item.rarity-legendary { border-color: #eab308; background: #1a1810; }
 
-.rarity-badge {
+.rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.rank-1 { background: #eab30830; color: #eab308; }
+.rank-2 { background: #94a3b830; color: #94a3b8; }
+.rank-3 { background: #cd7f3230; color: #cd7f32; }
+.rank-other { background: #2a2a3a; color: #8888a0; }
+
+.score-line {
+  font-size: 9px;
+  color: #666680;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.dup-count {
   display: inline-block;
   font-size: 9px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 1px 5px;
+  background: #2a2a3a;
+  color: #8888a0;
+  padding: 1px 4px;
   border-radius: 3px;
-  vertical-align: middle;
   margin-left: 4px;
 }
-.rarity-badge.common { background: #8888a020; color: #8888a0; }
-.rarity-badge.uncommon { background: #22c55e20; color: #22c55e; }
-.rarity-badge.rare { background: #818cf820; color: #818cf8; }
-.rarity-badge.legendary { background: #eab30820; color: #eab308; }
-
-.rarity-filters {
-  display: flex;
-  gap: 4px;
-  padding: 8px 8px 4px;
-}
-.filter-chip {
-  background: #1a1a2a;
-  border: 1px solid #2a2a3a;
-  color: #8888a0;
-  font-size: 10px;
-  font-family: inherit;
-  padding: 3px 8px;
-  border-radius: 10px;
-  cursor: pointer;
-}
-.filter-chip:hover { border-color: #4a4a6a; }
-.filter-chip.active { background: #6366f1; border-color: #6366f1; color: #fff; }
 .pinned-thumb {
   border-radius: 4px;
   flex-shrink: 0;
@@ -164,6 +164,7 @@ header h1 {
 .pinned-info {
   font-size: 11px;
   line-height: 1.5;
+  min-width: 0;
 }
 .pinned-info .n-label {
   font-weight: 600;
@@ -175,8 +176,10 @@ header h1 {
 .pinned-info .strategy-label {
   color: #8888a0;
 }
-.pinned-info .iter-label {
-  color: #666680;
+.cid-label {
+  font-size: 9px;
+  color: #444460;
+  font-family: inherit;
 }
 .empty-msg {
   padding: 20px;
@@ -184,6 +187,75 @@ header h1 {
   font-size: 12px;
   color: #444460;
 }
+
+.detail-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+.detail-overlay.open { display: flex; }
+.detail-panel {
+  background: #111118;
+  border: 1px solid #2a2a3a;
+  border-radius: 8px;
+  padding: 20px;
+  max-width: 600px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.detail-panel h3 {
+  font-size: 14px;
+  color: #6366f1;
+  margin-bottom: 12px;
+}
+.detail-panel pre {
+  background: #0a0a0f;
+  border: 1px solid #1a1a2a;
+  border-radius: 4px;
+  padding: 12px;
+  font-size: 11px;
+  color: #c0c0d0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.detail-panel .detail-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.detail-panel .detail-label { color: #666680; min-width: 80px; }
+.detail-panel .detail-value { color: #e0e0e8; }
+.detail-close {
+  float: right;
+  background: none;
+  border: 1px solid #2a2a3a;
+  color: #8888a0;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.detail-close:hover { border-color: #4a4a6a; color: #e0e0e8; }
+.copy-btn {
+  background: #1a1a2a;
+  border: 1px solid #2a2a3a;
+  color: #8888a0;
+  font-size: 10px;
+  font-family: inherit;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+.copy-btn:hover { border-color: #4a4a6a; color: #e0e0e8; }
 
 .progress-bar {
   height: 3px;
@@ -219,18 +291,15 @@ header h1 {
     <canvas id="matrix-canvas" width="500" height="500"></canvas>
   </div>
   <div class="pinned-panel">
-    <div class="pinned-header">Discoveries <span id="pinned-count">(0)</span></div>
-    <div class="rarity-filters" id="rarity-filters">
-      <button class="filter-chip active" data-filter="all">All</button>
-      <button class="filter-chip" data-filter="common">Common</button>
-      <button class="filter-chip" data-filter="uncommon">Uncommon</button>
-      <button class="filter-chip" data-filter="rare">Rare</button>
-      <button class="filter-chip" data-filter="legendary">Legend</button>
-    </div>
+    <div class="pinned-header">Top 10 Discoveries <span id="pinned-count"></span></div>
     <div class="pinned-list" id="pinned-list">
       <div class="empty-msg">Waiting for valid graphs...</div>
     </div>
   </div>
+</div>
+
+<div class="detail-overlay" id="detail-overlay">
+  <div class="detail-panel" id="detail-panel"></div>
 </div>
 
 <script>
@@ -347,7 +416,12 @@ const pinnedCount = document.getElementById('pinned-count');
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 const progressFill = document.getElementById('progress-fill');
-let discoveries = 0;
+const detailOverlay = document.getElementById('detail-overlay');
+const detailPanel = document.getElementById('detail-panel');
+let totalFinds = 0;
+let uniqueFinds = 0;
+// Map<cid, {entry, element}>
+const discoveryMap = new Map();
 
 function $(id) { return document.getElementById(id); }
 
@@ -364,11 +438,32 @@ function formatNum(n) {
   return String(n);
 }
 
+function formatAut(n) {
+  if (n >= 1e9) return n.toExponential(1);
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(Math.round(n));
+}
+
 // Compute matrix display size
 function matrixSize() {
   const panel = document.querySelector('.matrix-panel');
   if (!panel) return 500;
   return Math.min(panel.clientWidth - 40, panel.clientHeight - 40, 600);
+}
+
+function rankClass(rank) {
+  if (rank === 1) return 'rank-1';
+  if (rank === 2) return 'rank-2';
+  if (rank === 3) return 'rank-3';
+  return 'rank-other';
+}
+
+function rankBorderColor(rank) {
+  if (rank === 1) return '#eab308';
+  if (rank === 2) return '#94a3b8';
+  if (rank === 3) return '#cd7f32';
+  return '#2a2a3a';
 }
 
 // WebSocket
@@ -396,8 +491,8 @@ function connect() {
     const msg = JSON.parse(e.data);
     if (msg.type === 'snapshot') {
       handleSnapshot(msg);
-    } else if (msg.type === 'pinned') {
-      handlePinned(msg);
+    } else if (msg.type === 'leaderboard') {
+      handleLeaderboard(msg);
     } else if (msg.type === 'hello') {
       statusText.textContent = 'connected (v' + msg.version + ')';
     }
@@ -432,65 +527,114 @@ function handleSnapshot(snap) {
   drawMatrix(canvas, snap.graph, size);
 }
 
-const RARITY_COLORS = {
-  common: '#8888a0', uncommon: '#22c55e', rare: '#818cf8', legendary: '#eab308'
-};
+function handleLeaderboard(msg) {
+  // Full board replacement (on reconnect)
+  // msg is an array of LeaderboardEntry (the serde Leaderboard variant wraps Vec directly)
+  const entries = Array.isArray(msg) ? msg : (msg.entries || []);
 
-let activeFilter = 'all';
+  // Clear state
+  discoveryMap.clear();
+  pinnedList.innerHTML = '';
+  uniqueFinds = 0;
+  totalFinds = 0;
 
-function handlePinned(pinned) {
-  discoveries++;
-  pinnedCount.textContent = '(' + discoveries + ')';
-
-  // Remove empty message
-  const empty = pinnedList.querySelector('.empty-msg');
-  if (empty) empty.remove();
-
-  const rarity = pinned.rarity || 'common';
-  const item = document.createElement('div');
-  item.className = 'pinned-item rarity-' + rarity;
-  item.dataset.rarity = rarity;
-
-  // Apply current filter
-  if (activeFilter !== 'all' && activeFilter !== rarity) {
-    item.style.display = 'none';
+  if (entries.length === 0) {
+    pinnedList.innerHTML = '<div class="empty-msg">Waiting for valid graphs...</div>';
+    pinnedCount.textContent = '';
+    return;
   }
+
+  for (const entry of entries) {
+    totalFinds += entry.times_found || 1;
+    uniqueFinds++;
+    const el = createEntryElement(entry);
+    pinnedList.appendChild(el);
+    discoveryMap.set(entry.cid, { entry: entry, element: el });
+  }
+  pinnedCount.textContent = '(' + uniqueFinds + ' unique / ' + totalFinds + ' total)';
+}
+
+function createEntryElement(entry) {
+  const cid = entry.cid || '';
+  const shortCid = cid.substring(0, 12);
+  const score = entry.score || {};
+
+  const item = document.createElement('div');
+  item.className = 'pinned-item' + (entry.is_record ? ' record' : '');
+  item.dataset.cid = cid;
+  item.style.borderColor = rankBorderColor(entry.rank);
 
   const thumb = document.createElement('canvas');
   thumb.className = 'pinned-thumb';
-  drawThumb(thumb, pinned.graph, 48);
+  drawThumb(thumb, entry.graph, 48);
 
   const info = document.createElement('div');
   info.className = 'pinned-info';
-  const rarityLabel = rarity.charAt(0).toUpperCase() + rarity.slice(1);
-  const badge = '<span class="rarity-badge ' + rarity + '">' + rarityLabel + '</span>';
-  const oa = ' <span class="iter-label">K' + (pinned.clique_count!=null?pinned.clique_count:'?') + ' I' + (pinned.indep_count!=null?pinned.indep_count:'?') + '</span>';
+
+  const rankBadge = '<span class="rank-badge ' + rankClass(entry.rank) + '">#' + entry.rank + '</span>';
+  const dupBadge = (entry.times_found || 1) > 1 ? '<span class="dup-count">\u00d7' + entry.times_found + '</span>' : '<span class="dup-count">\u00d71</span>';
+  const scoreLine = '<span class="score-line">\u03c9=' + (score.omega||'?') + ' \u03b1=' + (score.alpha||'?') +
+    ' | C\u03c9=' + (score.c_omega||'?') + ' C\u03b1=' + (score.c_alpha||'?') +
+    ' | Aut:' + formatAut(score.aut_order||0) + '</span>';
+
   info.innerHTML =
-    '<span class="n-label" style="color:' + RARITY_COLORS[rarity] + '">n=' + pinned.n + '</span>' + badge + '<br>' +
-    '<span class="strategy-label">' + pinned.strategy + '</span>' + oa + '<br>' +
-    '<span class="iter-label">iter ' + formatNum(pinned.iteration) + ' \u2022 ' + formatElapsed(pinned.found_at_ms) + '</span>';
+    rankBadge + '<span class="n-label">n=' + entry.n + '</span>' + dupBadge + '<br>' +
+    '<span class="strategy-label">' + entry.strategy + '</span><br>' +
+    scoreLine + '<br>' +
+    '<span class="cid-label">' + shortCid + '\u2026</span>';
+
+  item.addEventListener('click', function() {
+    const d = discoveryMap.get(cid);
+    if (d) showDetail(d.entry);
+  });
 
   item.appendChild(thumb);
   item.appendChild(info);
-  pinnedList.prepend(item);
+  return item;
 }
 
-// Filter chips
-document.getElementById('rarity-filters').addEventListener('click', function(e) {
-  const chip = e.target.closest('.filter-chip');
-  if (!chip) return;
-  activeFilter = chip.dataset.filter;
-  // Update active state
-  this.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-  // Filter items
-  pinnedList.querySelectorAll('.pinned-item').forEach(item => {
-    if (activeFilter === 'all' || item.dataset.rarity === activeFilter) {
-      item.style.display = '';
-    } else {
-      item.style.display = 'none';
-    }
+function showDetail(entry) {
+  const cid = entry.cid || '';
+  const score = entry.score || {};
+  const rgxfJson = JSON.stringify(entry.graph, null, 2);
+
+  detailPanel.innerHTML =
+    '<button class="detail-close" id="detail-close">\u2715 Close</button>' +
+    '<h3>Graph Detail</h3>' +
+    '<div class="detail-row"><span class="detail-label">Rank</span><span class="detail-value"><span class="rank-badge ' + rankClass(entry.rank) + '">#' + entry.rank + '</span></span></div>' +
+    '<div class="detail-row"><span class="detail-label">CID</span><span class="detail-value" style="word-break:break-all;font-size:11px">' + cid + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">n</span><span class="detail-value">' + entry.n + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">Strategy</span><span class="detail-value">' + entry.strategy + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">\u03c9 (clique #)</span><span class="detail-value">' + (score.omega||'?') + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">\u03b1 (indep #)</span><span class="detail-value">' + (score.alpha||'?') + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">C\u03c9 (max cliques)</span><span class="detail-value">' + (score.c_omega||'?') + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">C\u03b1 (max indep)</span><span class="detail-value">' + (score.c_alpha||'?') + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">|Aut(G)|</span><span class="detail-value">' + (score.aut_order||'?') + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">Times found</span><span class="detail-value">' + (entry.times_found||1) + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">RGXF</span></div>' +
+    '<pre id="rgxf-json">' + escapeHtml(rgxfJson) + '</pre>' +
+    '<button class="copy-btn" id="copy-rgxf">Copy RGXF JSON</button>';
+
+  detailOverlay.classList.add('open');
+
+  document.getElementById('detail-close').addEventListener('click', function() {
+    detailOverlay.classList.remove('open');
   });
+  document.getElementById('copy-rgxf').addEventListener('click', function() {
+    navigator.clipboard.writeText(rgxfJson).then(function() {
+      document.getElementById('copy-rgxf').textContent = 'Copied!';
+      setTimeout(function() { document.getElementById('copy-rgxf').textContent = 'Copy RGXF JSON'; }, 1500);
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Close detail on overlay click
+detailOverlay.addEventListener('click', function(e) {
+  if (e.target === detailOverlay) detailOverlay.classList.remove('open');
 });
 
 // Handle resize

@@ -1,4 +1,6 @@
+pub mod automorphism;
 pub mod clique;
+pub mod scoring;
 pub mod types;
 
 use ramseynet_graph::AdjacencyMatrix;

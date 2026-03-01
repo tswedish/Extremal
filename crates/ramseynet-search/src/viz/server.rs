@@ -9,7 +9,7 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::Router;
 use tokio::sync::watch;
-use tracing::{info, warn};
+use tracing::info;
 
 use super::{VizHandle, VizMessage};
 
@@ -65,8 +65,18 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
         return;
     }
 
+    // Send current leaderboard state so reconnecting browsers see the full board
+    let lb_rx = state.viz.subscribe_leaderboard();
+    let current_lb = lb_rx.borrow().clone();
+    if !current_lb.is_empty() {
+        let lb_msg = VizMessage::Leaderboard(current_lb);
+        if send_json(&mut socket, &lb_msg).await.is_err() {
+            return;
+        }
+    }
+
     let mut snapshot_rx = state.viz.subscribe_snapshot();
-    let mut pinned_rx = state.viz.subscribe_pinned();
+    let mut lb_rx = state.viz.subscribe_leaderboard();
     let mut interval = tokio::time::interval(Duration::from_millis(50));
 
     loop {
@@ -80,18 +90,14 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
                     }
                 }
             }
-            result = pinned_rx.recv() => {
-                match result {
-                    Ok(pinned) => {
-                        let msg = VizMessage::Pinned(pinned);
-                        if send_json(&mut socket, &msg).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        // Lagged — skip
-                        warn!("viz ws: pinned broadcast lagged");
-                    }
+            result = lb_rx.changed() => {
+                if result.is_err() {
+                    break; // channel closed
+                }
+                let entries = lb_rx.borrow_and_update().clone();
+                let msg = VizMessage::Leaderboard(entries);
+                if send_json(&mut socket, &msg).await.is_err() {
+                    break;
                 }
             }
             msg = socket.recv() => {

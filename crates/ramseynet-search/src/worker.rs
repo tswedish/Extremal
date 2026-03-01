@@ -4,13 +4,14 @@ use std::time::Instant;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use ramseynet_graph::rgxf;
+use ramseynet_verifier::scoring::compute_score;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 
 use crate::client::ServerClient;
 use crate::error::SearchError;
 use crate::search::Searcher;
-use crate::viz::{compute_rarity, NoOpObserver, VizHandle, VizObserver};
+use crate::viz::{NoOpObserver, VizHandle, VizObserver};
 
 /// Configuration for the worker loop.
 pub struct WorkerConfig {
@@ -94,13 +95,13 @@ pub async fn run_worker(
 
             info!(strategy, target_n, max_iters, "running search");
 
-            // Run search in blocking thread
+            // Run search in blocking thread (also computes score if valid)
             let n = target_n;
             let searcher = Arc::clone(searcher);
             let mut search_rng = SmallRng::from_rng(&mut rng).unwrap();
             let viz = viz_handle.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                match viz {
+            let (result, score) = tokio::task::spawn_blocking(move || {
+                let result = match viz {
                     Some(ref h) => {
                         let obs = VizObserver::new(Arc::clone(h));
                         searcher.search(n, k, ell, max_iters, &mut search_rng, &obs)
@@ -108,32 +109,49 @@ pub async fn run_worker(
                     None => {
                         searcher.search(n, k, ell, max_iters, &mut search_rng, &NoOpObserver)
                     }
-                }
+                };
+                let score = if result.valid {
+                    Some(compute_score(&result.graph))
+                } else {
+                    None
+                };
+                (result, score)
             })
             .await
             .unwrap();
 
             let elapsed = start.elapsed();
 
-            if result.valid {
-                let rarity_info = compute_rarity(&result.graph, k, ell, false);
-                info!(
-                    strategy,
-                    target_n,
-                    iterations = result.iterations,
-                    edges = result.graph.num_edges(),
-                    elapsed_ms = elapsed.as_millis() as u64,
-                    rarity = ?rarity_info.tier,
-                    cliques = rarity_info.clique_count,
-                    indep_sets = rarity_info.indep_count,
-                    "found valid graph!"
-                );
-
-                // Pin as valid discovery (not yet known if record)
+            if let Some(score) = score {
+                // Submit to leaderboard with pre-computed score
                 if let Some(ref vh) = viz_handle {
-                    vh.pin_graph(
+                    if let Some(entry) = vh.submit_discovery(
                         &result.graph, target_n, strategy, result.iterations,
-                        false, rarity_info,
+                        false, score.clone(),
+                    ) {
+                        info!(
+                            strategy,
+                            target_n,
+                            iterations = result.iterations,
+                            edges = result.graph.num_edges(),
+                            elapsed_ms = elapsed.as_millis() as u64,
+                            omega = entry.score.omega,
+                            alpha = entry.score.alpha,
+                            c_omega = entry.score.c_omega,
+                            c_alpha = entry.score.c_alpha,
+                            aut_order = entry.score.aut_order,
+                            rank = entry.rank,
+                            "found valid graph!"
+                        );
+                    }
+                } else {
+                    info!(
+                        strategy,
+                        target_n,
+                        iterations = result.iterations,
+                        edges = result.graph.num_edges(),
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        "found valid graph!"
                     );
                 }
 
@@ -151,10 +169,9 @@ pub async fn run_worker(
                         if is_record {
                             info!("new record! n={target_n}");
                             if let Some(ref vh) = viz_handle {
-                                let rec_rarity = compute_rarity(&result.graph, k, ell, true);
-                                vh.pin_graph(
+                                vh.submit_discovery(
                                     &result.graph, target_n, strategy, result.iterations,
-                                    true, rec_rarity,
+                                    true, score,
                                 );
                             }
                         }
@@ -246,8 +263,8 @@ async fn run_worker_offline(
             let searcher = Arc::clone(searcher);
             let mut search_rng = SmallRng::from_rng(&mut rng).unwrap();
             let viz = viz_handle.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                match viz {
+            let (result, score) = tokio::task::spawn_blocking(move || {
+                let result = match viz {
                     Some(ref h) => {
                         let obs = VizObserver::new(Arc::clone(h));
                         searcher.search(n, k, ell, max_iters, &mut search_rng, &obs)
@@ -255,32 +272,50 @@ async fn run_worker_offline(
                     None => {
                         searcher.search(n, k, ell, max_iters, &mut search_rng, &NoOpObserver)
                     }
-                }
+                };
+                let score = if result.valid {
+                    Some(compute_score(&result.graph))
+                } else {
+                    None
+                };
+                (result, score)
             })
             .await
             .unwrap();
 
             let elapsed = start.elapsed();
 
-            if result.valid {
-                let rarity_info = compute_rarity(&result.graph, k, ell, false);
-                info!(
-                    strategy,
-                    target_n,
-                    round,
-                    iterations = result.iterations,
-                    edges = result.graph.num_edges(),
-                    elapsed_ms = elapsed.as_millis() as u64,
-                    rarity = ?rarity_info.tier,
-                    cliques = rarity_info.clique_count,
-                    indep_sets = rarity_info.indep_count,
-                    "found valid graph (offline)"
-                );
-
+            if let Some(score) = score {
                 if let Some(ref vh) = viz_handle {
-                    vh.pin_graph(
+                    if let Some(entry) = vh.submit_discovery(
                         &result.graph, target_n, strategy, result.iterations,
-                        false, rarity_info,
+                        false, score,
+                    ) {
+                        info!(
+                            strategy,
+                            target_n,
+                            round,
+                            iterations = result.iterations,
+                            edges = result.graph.num_edges(),
+                            elapsed_ms = elapsed.as_millis() as u64,
+                            omega = entry.score.omega,
+                            alpha = entry.score.alpha,
+                            c_omega = entry.score.c_omega,
+                            c_alpha = entry.score.c_alpha,
+                            aut_order = entry.score.aut_order,
+                            rank = entry.rank,
+                            "found valid graph (offline)"
+                        );
+                    }
+                } else {
+                    info!(
+                        strategy,
+                        target_n,
+                        round,
+                        iterations = result.iterations,
+                        edges = result.graph.num_edges(),
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        "found valid graph (offline)"
                     );
                 }
             } else {

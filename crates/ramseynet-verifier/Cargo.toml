@@ -11,6 +11,7 @@ ramseynet-graph = { path = "../ramseynet-graph" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+nauty-Traces-sys = "0.11"
 
 [[bin]]
 name = "ovwc1"

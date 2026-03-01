@@ -1,87 +1,19 @@
 //! Live search visualization via embedded web server.
 //!
 //! When `--viz-port` is set, an axum server streams search snapshots
-//! to a browser over WebSocket at ~20fps.
+//! to a browser over WebSocket at ~20fps. Valid graphs are scored and
+//! ranked in a top-10 leaderboard.
 
 pub mod server;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use ramseynet_graph::{rgxf, AdjacencyMatrix};
-use ramseynet_verifier::clique::count_cliques;
+use ramseynet_graph::{compute_cid, rgxf, AdjacencyMatrix};
+use ramseynet_verifier::scoring::GraphScore;
 use serde::Serialize;
-use tokio::sync::{broadcast, watch};
-
-/// Rarity tier for a valid Ramsey graph based on near-miss clique/independent-set counts.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum RarityTier {
-    Common,
-    Uncommon,
-    Rare,
-    Legendary,
-}
-
-/// Rarity details for a valid graph.
-#[derive(Clone, Debug, Serialize)]
-pub struct RarityInfo {
-    pub tier: RarityTier,
-    /// Number of (k-1)-cliques in G (near-miss clique violations).
-    pub clique_count: u64,
-    /// Number of (ell-1)-independent sets in G (near-miss indep-set violations).
-    pub indep_count: u64,
-}
-
-/// Compute the rarity of a valid R(k, ell) graph based on how many near-miss
-/// structures it contains.
-///
-/// Counts (k-1)-cliques and (ell-1)-independent sets. Fewer near-misses on
-/// both sides means the graph is "tighter" against the Ramsey bound and rarer.
-///
-/// Thresholds scale with n so tiers stay meaningful across graph sizes:
-/// - Rare: both counts <= n
-/// - Uncommon: both counts <= n^2
-/// - Common: everything else
-pub fn compute_rarity(
-    graph: &AdjacencyMatrix,
-    k: u32,
-    ell: u32,
-    is_record: bool,
-) -> RarityInfo {
-    let n = graph.n() as u64;
-
-    // Count (k-1)-cliques in G
-    let clique_count = if k >= 2 {
-        count_cliques(graph, k - 1)
-    } else {
-        0
-    };
-
-    // Count (ell-1)-independent sets = (ell-1)-cliques in complement
-    let indep_count = if ell >= 2 {
-        let comp = graph.complement();
-        count_cliques(&comp, ell - 1)
-    } else {
-        0
-    };
-
-    let tier = if is_record {
-        RarityTier::Legendary
-    } else if clique_count <= n && indep_count <= n {
-        RarityTier::Rare
-    } else if clique_count <= n * n && indep_count <= n * n {
-        RarityTier::Uncommon
-    } else {
-        RarityTier::Common
-    };
-
-    RarityInfo {
-        tier,
-        clique_count,
-        indep_count,
-    }
-}
+use tokio::sync::watch;
 
 /// A snapshot of the current search state, sent to the browser at ~20fps.
 #[derive(Clone, Debug, Serialize)]
@@ -100,18 +32,81 @@ pub struct SearchSnapshot {
     pub throughput: f64,
 }
 
-/// A valid graph that was pinned (discovered) during search.
+/// A ranked entry in the leaderboard.
 #[derive(Clone, Debug, Serialize)]
-pub struct PinnedGraph {
+pub struct LeaderboardEntry {
+    pub cid: String,
     pub graph: ramseynet_graph::rgxf::RgxfJson,
     pub n: u32,
     pub strategy: String,
     pub iteration: u64,
     pub is_record: bool,
     pub found_at_ms: u64,
-    pub rarity: RarityTier,
-    pub clique_count: u64,
-    pub indep_count: u64,
+    pub score: GraphScore,
+    pub rank: usize,       // 1-based
+    pub times_found: u64,  // CID dedup counter
+}
+
+/// Top-N leaderboard that tracks the best discoveries.
+struct Leaderboard {
+    entries: Vec<LeaderboardEntry>,     // sorted best-first
+    cid_index: HashMap<String, usize>,  // CID → index in entries
+    capacity: usize,
+}
+
+impl Leaderboard {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: Vec::new(),
+            cid_index: HashMap::new(),
+            capacity,
+        }
+    }
+
+    /// Try to submit a discovery. Returns the entry if it was accepted (new or dedup).
+    fn submit(&mut self, entry: LeaderboardEntry) -> Option<LeaderboardEntry> {
+        let cid = entry.cid.clone();
+
+        // CID dedup: increment count if already on the board
+        if let Some(&idx) = self.cid_index.get(&cid) {
+            self.entries[idx].times_found += 1;
+            return Some(self.entries[idx].clone());
+        }
+
+        // Find insertion position (sorted by score ascending = best first)
+        let pos = self
+            .entries
+            .binary_search_by(|e| e.score.cmp(&entry.score))
+            .unwrap_or_else(|p| p);
+
+        // Reject if board is full and this would go past capacity
+        if pos >= self.capacity && self.entries.len() >= self.capacity {
+            return None;
+        }
+
+        // Insert
+        self.entries.insert(pos, entry);
+
+        // Evict worst if over capacity
+        if self.entries.len() > self.capacity {
+            let evicted = self.entries.pop().unwrap();
+            self.cid_index.remove(&evicted.cid);
+        }
+
+        // Rebuild index and ranks
+        self.cid_index.clear();
+        for (i, e) in self.entries.iter_mut().enumerate() {
+            e.rank = i + 1;
+            self.cid_index.insert(e.cid.clone(), i);
+        }
+
+        let accepted_idx = self.cid_index[&cid];
+        Some(self.entries[accepted_idx].clone())
+    }
+
+    fn entries(&self) -> Vec<LeaderboardEntry> {
+        self.entries.clone()
+    }
 }
 
 /// Tagged message sent over the WebSocket.
@@ -122,14 +117,15 @@ pub enum VizMessage {
     Hello { version: String },
     #[serde(rename = "snapshot")]
     Snapshot(SearchSnapshot),
-    #[serde(rename = "pinned")]
-    Pinned(PinnedGraph),
+    #[serde(rename = "leaderboard")]
+    Leaderboard(Vec<LeaderboardEntry>),
 }
 
 /// Handle that search threads use to push updates to the viz server.
 pub struct VizHandle {
     snapshot_tx: watch::Sender<Option<SearchSnapshot>>,
-    pinned_tx: broadcast::Sender<PinnedGraph>,
+    leaderboard: Mutex<Leaderboard>,
+    leaderboard_tx: watch::Sender<Vec<LeaderboardEntry>>,
     start_time: Instant,
 }
 
@@ -142,10 +138,11 @@ impl Default for VizHandle {
 impl VizHandle {
     pub fn new() -> Self {
         let (snapshot_tx, _) = watch::channel(None);
-        let (pinned_tx, _) = broadcast::channel(64);
+        let (leaderboard_tx, _) = watch::channel(Vec::new());
         Self {
             snapshot_tx,
-            pinned_tx,
+            leaderboard: Mutex::new(Leaderboard::new(10)),
+            leaderboard_tx,
             start_time: Instant::now(),
         }
     }
@@ -154,35 +151,52 @@ impl VizHandle {
         let _ = self.snapshot_tx.send(Some(snapshot));
     }
 
-    pub fn pin_graph(
+    /// Submit a discovery with a pre-computed score to the leaderboard.
+    /// Checks admission and broadcasts if accepted.
+    ///
+    /// **Important:** Call this from a blocking context (or after `spawn_blocking`)
+    /// since the caller is responsible for computing the score via `compute_score`.
+    ///
+    /// Returns the LeaderboardEntry if the graph was accepted (or deduped).
+    pub fn submit_discovery(
         &self,
         graph: &AdjacencyMatrix,
         n: u32,
         strategy: &str,
         iteration: u64,
         is_record: bool,
-        rarity_info: RarityInfo,
-    ) {
-        let pinned = PinnedGraph {
+        score: GraphScore,
+    ) -> Option<LeaderboardEntry> {
+        let cid = compute_cid(graph);
+        let entry = LeaderboardEntry {
+            cid: cid.to_hex(),
             graph: rgxf::to_json(graph),
             n,
             strategy: strategy.to_string(),
             iteration,
             is_record,
             found_at_ms: self.start_time.elapsed().as_millis() as u64,
-            rarity: rarity_info.tier,
-            clique_count: rarity_info.clique_count,
-            indep_count: rarity_info.indep_count,
+            score,
+            rank: 0, // will be set by leaderboard
+            times_found: 1,
         };
-        let _ = self.pinned_tx.send(pinned);
+
+        let mut lb = self.leaderboard.lock().unwrap();
+        let result = lb.submit(entry);
+
+        if result.is_some() {
+            let _ = self.leaderboard_tx.send(lb.entries());
+        }
+
+        result
     }
 
     pub fn subscribe_snapshot(&self) -> watch::Receiver<Option<SearchSnapshot>> {
         self.snapshot_tx.subscribe()
     }
 
-    pub fn subscribe_pinned(&self) -> broadcast::Receiver<PinnedGraph> {
-        self.pinned_tx.subscribe()
+    pub fn subscribe_leaderboard(&self) -> watch::Receiver<Vec<LeaderboardEntry>> {
+        self.leaderboard_tx.subscribe()
     }
 
     pub fn elapsed_ms(&self) -> u64 {
