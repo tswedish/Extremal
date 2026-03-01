@@ -359,6 +359,30 @@ impl Ledger {
         Ok(ns)
     }
 
+    /// Get RGXF JSON for the top `limit` leaderboard entries for a (k, ell, n) triple.
+    pub fn get_leaderboard_graphs(
+        &self,
+        k: u32,
+        ell: u32,
+        n: u32,
+        limit: u32,
+    ) -> Result<Vec<String>, LedgerError> {
+        let (k, ell) = canonical(k, ell);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT gs.rgxf_json FROM leaderboard lb \
+             JOIN graph_submissions gs ON gs.graph_cid = lb.graph_cid \
+             WHERE lb.k=?1 AND lb.ell=?2 AND lb.n=?3 \
+             ORDER BY lb.rank LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(params![k, ell, n, limit], |row| row.get(0))?;
+        let mut rgxfs = Vec::new();
+        for row in rows {
+            rgxfs.push(row?);
+        }
+        Ok(rgxfs)
+    }
+
     /// Get the RGXF JSON string for a submission by CID.
     pub fn get_submission_rgxf(&self, cid: &str) -> Result<Option<String>, LedgerError> {
         let conn = self.conn.lock().unwrap();

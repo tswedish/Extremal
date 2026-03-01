@@ -6,6 +6,8 @@
 //! random graph being valid is ~10^-19. Structured initializations start
 //! much closer to the valid region.
 
+use std::sync::{Arc, Mutex};
+
 use rand::rngs::SmallRng;
 use rand::Rng;
 use ramseynet_graph::AdjacencyMatrix;
@@ -36,6 +38,19 @@ pub enum InitStrategy {
     BalancedRandom {
         /// Edge probability (0.0 to 1.0).
         density: f64,
+    },
+
+    /// Seed from server leaderboard entries. Picks a random graph from the
+    /// shared pool each invocation, optionally applying random edge flips as
+    /// noise. Falls back to PerturbedPaley if the pool is empty.
+    ///
+    /// The pool is behind `Arc<Mutex<>>` so the worker can refresh it each
+    /// round while searchers read from it concurrently.
+    Leaderboard {
+        /// Shared pool of graphs, updated by the worker loop.
+        pool: Arc<Mutex<Vec<AdjacencyMatrix>>>,
+        /// Number of random edge flips to apply as noise (0 = use as-is).
+        noise_flips: u32,
     },
 }
 
@@ -68,7 +83,56 @@ pub fn init_graph(n: u32, strategy: &InitStrategy, rng: &mut SmallRng) -> Adjace
             }
             g
         }
+        InitStrategy::Leaderboard { pool, noise_flips } => {
+            let graphs = pool.lock().unwrap();
+            if graphs.is_empty() {
+                drop(graphs);
+                // Fallback to perturbed Paley if no leaderboard graphs available
+                let mut g = paley_graph(n);
+                perturb(&mut g, 0.05, rng);
+                g
+            } else {
+                let mut g = graphs[rng.gen_range(0..graphs.len())].clone();
+                drop(graphs);
+                // Apply noise flips
+                if *noise_flips > 0 {
+                    flip_random_edges(&mut g, *noise_flips, rng);
+                }
+                g
+            }
+        }
     }
+}
+
+/// Flip exactly `count` randomly chosen edges.
+fn flip_random_edges(graph: &mut AdjacencyMatrix, count: u32, rng: &mut SmallRng) {
+    let n = graph.n();
+    let num_possible = n * (n - 1) / 2;
+    if num_possible == 0 {
+        return;
+    }
+    for _ in 0..count {
+        // Pick a random edge position
+        let idx = rng.gen_range(0..num_possible);
+        // Convert linear index to (i, j)
+        let (i, j) = linear_to_edge(idx, n);
+        let current = graph.edge(i, j);
+        graph.set_edge(i, j, !current);
+    }
+}
+
+/// Convert a linear index into an upper-triangular edge (i, j) with i < j.
+fn linear_to_edge(idx: u32, n: u32) -> (u32, u32) {
+    // Row i has (n - 1 - i) entries. Walk rows until we find the right one.
+    let mut remaining = idx;
+    for i in 0..n {
+        let row_len = n - 1 - i;
+        if remaining < row_len {
+            return (i, i + 1 + remaining);
+        }
+        remaining -= row_len;
+    }
+    unreachable!()
 }
 
 fn random_graph(n: u32, rng: &mut SmallRng) -> AdjacencyMatrix {
@@ -236,5 +300,68 @@ mod tests {
         assert_eq!(smallest_paley_prime(14), 17);  // next: 17
         assert_eq!(smallest_paley_prime(17), 17);
         assert_eq!(smallest_paley_prime(18), 29);
+    }
+
+    #[test]
+    fn linear_to_edge_covers_all() {
+        let n = 5u32;
+        let num_edges = n * (n - 1) / 2;
+        let mut edges = Vec::new();
+        for idx in 0..num_edges {
+            let (i, j) = linear_to_edge(idx, n);
+            assert!(i < j, "edge ({i},{j}) should have i < j");
+            assert!(j < n, "edge ({i},{j}) should have j < n");
+            edges.push((i, j));
+        }
+        assert_eq!(edges.len(), 10);
+        // Should cover all unique edges
+        let unique: std::collections::HashSet<_> = edges.into_iter().collect();
+        assert_eq!(unique.len(), 10);
+    }
+
+    #[test]
+    fn leaderboard_init_picks_from_pool() {
+        let mut rng = SmallRng::seed_from_u64(42);
+        // Create a pool with a known graph (C5)
+        let c5 = paley_graph(5);
+        let pool = Arc::new(Mutex::new(vec![c5.clone()]));
+        let strategy = InitStrategy::Leaderboard { pool, noise_flips: 0 };
+        let g = init_graph(5, &strategy, &mut rng);
+        // With no noise and only one graph in pool, output should match
+        assert_eq!(g.num_edges(), c5.num_edges());
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                assert_eq!(g.edge(i, j), c5.edge(i, j));
+            }
+        }
+    }
+
+    #[test]
+    fn leaderboard_init_applies_noise() {
+        let mut rng = SmallRng::seed_from_u64(42);
+        let c5 = paley_graph(5);
+        let pool = Arc::new(Mutex::new(vec![c5.clone()]));
+        let strategy = InitStrategy::Leaderboard { pool, noise_flips: 3 };
+        let g = init_graph(5, &strategy, &mut rng);
+        // With 3 noise flips, graph should differ from C5
+        let mut diffs = 0;
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                if g.edge(i, j) != c5.edge(i, j) {
+                    diffs += 1;
+                }
+            }
+        }
+        assert!(diffs > 0 && diffs <= 3, "expected 1-3 diffs, got {diffs}");
+    }
+
+    #[test]
+    fn leaderboard_init_falls_back_when_empty() {
+        let mut rng = SmallRng::seed_from_u64(42);
+        let pool = Arc::new(Mutex::new(Vec::new()));
+        let strategy = InitStrategy::Leaderboard { pool, noise_flips: 0 };
+        let g = init_graph(5, &strategy, &mut rng);
+        // Should fall back to perturbed Paley — just check it produces a valid graph
+        assert_eq!(g.n(), 5);
     }
 }

@@ -3,6 +3,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SearchError;
 
+/// Leaderboard graphs response from the server.
+#[derive(Debug, Deserialize)]
+struct LeaderboardGraphsResponse {
+    graphs: Vec<RgxfJson>,
+}
+
 /// Threshold info returned by the server.
 #[derive(Debug, Deserialize)]
 pub struct ThresholdResponse {
@@ -68,6 +74,30 @@ impl ServerClient {
 
         let info: ThresholdResponse = resp.json().await?;
         Ok(info)
+    }
+
+    /// Fetch RGXF graphs from a leaderboard (top `limit` entries).
+    pub async fn get_leaderboard_graphs(
+        &self,
+        k: u32,
+        ell: u32,
+        n: u32,
+        limit: u32,
+    ) -> Result<Vec<RgxfJson>, SearchError> {
+        let url = format!(
+            "{}/api/leaderboards/{}/{}/{}/graphs?limit={}",
+            self.base_url, k, ell, n, limit
+        );
+        let resp = self.client.get(&url).send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SearchError::ServerError(format!("{status}: {body}")));
+        }
+
+        let body: LeaderboardGraphsResponse = resp.json().await?;
+        Ok(body.graphs)
     }
 
     /// Submit a graph to the server.

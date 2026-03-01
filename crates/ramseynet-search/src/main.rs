@@ -66,9 +66,13 @@ struct Cli {
     #[arg(long)]
     offline: bool,
 
-    /// Graph initialization: paley (default), perturbed-paley, random, balanced
+    /// Graph initialization: paley, perturbed-paley (default), random, balanced, leaderboard
     #[arg(long, default_value = "perturbed-paley")]
     init: String,
+
+    /// Number of random edge flips for leaderboard init noise (default: auto)
+    #[arg(long)]
+    noise_flips: Option<u32>,
 
     /// Beam width for tree search
     #[arg(long, default_value = "100")]
@@ -101,13 +105,30 @@ async fn main() -> Result<()> {
 
     let client = ServerClient::new(&cli.server);
 
+    // Shared pool for leaderboard init (created even if not used, to keep types simple)
+    let leaderboard_pool = Arc::new(std::sync::Mutex::new(Vec::<ramseynet_graph::AdjacencyMatrix>::new()));
+
     let init_strategy = match cli.init.as_str() {
         "paley" => InitStrategy::Paley,
         "perturbed-paley" => InitStrategy::PerturbedPaley { flip_fraction: 0.05 },
         "random" => InitStrategy::Random,
         "balanced" => InitStrategy::BalancedRandom { density: 0.5 },
-        other => anyhow::bail!("unknown init strategy: {other} (use paley, perturbed-paley, random, balanced)"),
+        "leaderboard" => {
+            // Default noise: sqrt(edges) / 2, minimum 1
+            let n = cli.n;
+            let num_edges = n * (n - 1) / 2;
+            let auto_noise = ((num_edges as f64).sqrt() / 2.0).ceil() as u32;
+            let noise = cli.noise_flips.unwrap_or(auto_noise);
+            info!(noise_flips = noise, "using leaderboard init strategy");
+            InitStrategy::Leaderboard {
+                pool: Arc::clone(&leaderboard_pool),
+                noise_flips: noise,
+            }
+        }
+        other => anyhow::bail!("unknown init strategy: {other} (use paley, perturbed-paley, random, balanced, leaderboard)"),
     };
+
+    let use_leaderboard_init = matches!(cli.init.as_str(), "leaderboard");
 
     let searchers: Vec<Box<dyn Searcher>> = match cli.strategy.as_str() {
         "greedy" => vec![Box::new(GreedySearcher)],
@@ -152,6 +173,11 @@ async fn main() -> Result<()> {
         max_iters: cli.max_iters,
         no_backoff: cli.no_backoff,
         offline: cli.offline,
+        leaderboard_pool: if use_leaderboard_init {
+            Some(leaderboard_pool)
+        } else {
+            None
+        },
     };
 
     // Graceful shutdown on Ctrl+C

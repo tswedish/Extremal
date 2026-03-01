@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State,
+        Path, Query, State,
     },
     http::StatusCode,
     response::IntoResponse,
@@ -148,6 +148,41 @@ async fn get_threshold(
         .unwrap()
         .map_err(map_ledger_error)?;
     Ok(Json(json!(info)))
+}
+
+/// GET /api/leaderboards/:k/:l/:n/graphs — RGXF for top leaderboard entries.
+async fn get_leaderboard_graphs(
+    State(state): State<Arc<AppState>>,
+    Path((k, ell, n)): Path<(u32, u32, u32)>,
+    Query(params): Query<GraphsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let rp = RamseyParams::canonical(k, ell);
+    let limit = params.limit.unwrap_or(10).min(100);
+    let ledger = state.ledger.clone();
+    let (pk, pl) = (rp.k, rp.ell);
+    let rgxfs = tokio::task::spawn_blocking(move || {
+        ledger.get_leaderboard_graphs(pk, pl, n, limit)
+    })
+    .await
+    .unwrap()
+    .map_err(map_ledger_error)?;
+
+    let graphs: Vec<Value> = rgxfs
+        .into_iter()
+        .filter_map(|s| serde_json::from_str(&s).ok())
+        .collect();
+
+    Ok(Json(json!({
+        "k": rp.k,
+        "ell": rp.ell,
+        "n": n,
+        "graphs": graphs,
+    })))
+}
+
+#[derive(Deserialize)]
+struct GraphsQuery {
+    limit: Option<u32>,
 }
 
 // ── Verify ──────────────────────────────────────────────────────────
@@ -466,6 +501,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/leaderboards/{k}/{l}/{n}/threshold",
             get(get_threshold),
+        )
+        .route(
+            "/api/leaderboards/{k}/{l}/{n}/graphs",
+            get(get_leaderboard_graphs),
         )
         .route("/api/submissions/{cid}", get(get_submission))
         .route("/api/verify", post(verify))
