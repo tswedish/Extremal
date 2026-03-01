@@ -7,10 +7,12 @@
 pub mod server;
 
 use std::collections::HashMap;
+use std::mem;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use ramseynet_graph::{compute_cid, rgxf, AdjacencyMatrix};
+use ramseynet_types::GraphCid;
 use ramseynet_verifier::scoring::GraphScore;
 use serde::Serialize;
 use tokio::sync::watch;
@@ -246,6 +248,85 @@ pub struct NoOpObserver;
 impl SearchObserver for NoOpObserver {
     #[inline]
     fn on_progress(&self, _info: &ProgressInfo) {}
+}
+
+/// A valid graph discovered mid-search, ready for server submission.
+pub struct Discovery {
+    pub graph: AdjacencyMatrix,
+    pub score: GraphScore,
+    pub cid: GraphCid,
+}
+
+/// Thread-safe collector that accumulates mid-search discoveries.
+#[derive(Clone)]
+pub struct DiscoveryCollector {
+    discoveries: Arc<Mutex<Vec<Discovery>>>,
+}
+
+impl Default for DiscoveryCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DiscoveryCollector {
+    pub fn new() -> Self {
+        Self {
+            discoveries: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn push(&self, discovery: Discovery) {
+        self.discoveries.lock().unwrap().push(discovery);
+    }
+
+    /// Drain all collected discoveries, leaving the collector empty.
+    pub fn drain(&self) -> Vec<Discovery> {
+        mem::take(&mut *self.discoveries.lock().unwrap())
+    }
+}
+
+/// Observer that collects all valid discoveries and optionally forwards to a
+/// `VizObserver` for live dashboard display. Replaces the old pattern of
+/// choosing between `VizObserver` and `NoOpObserver`.
+pub struct CollectorObserver {
+    pub collector: DiscoveryCollector,
+    viz: Option<VizObserver>,
+}
+
+impl CollectorObserver {
+    pub fn new(collector: DiscoveryCollector, viz: Option<VizObserver>) -> Self {
+        Self { collector, viz }
+    }
+}
+
+impl SearchObserver for CollectorObserver {
+    fn on_progress(&self, info: &ProgressInfo) {
+        if let Some(ref viz) = self.viz {
+            viz.on_progress(info);
+        }
+    }
+
+    fn on_valid_found(
+        &self,
+        graph: &AdjacencyMatrix,
+        n: u32,
+        k: u32,
+        ell: u32,
+        strategy: &str,
+        iteration: u64,
+    ) {
+        let cid = compute_cid(graph);
+        let score = ramseynet_verifier::scoring::compute_score(graph, &cid);
+        self.collector.push(Discovery {
+            graph: graph.clone(),
+            score: score.clone(),
+            cid: cid.clone(),
+        });
+        if let Some(ref viz) = self.viz {
+            viz.on_valid_found(graph, n, k, ell, strategy, iteration);
+        }
+    }
 }
 
 /// Observer that throttles updates to ~20fps and sends them to VizHandle.

@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
-use ramseynet_graph::{compute_cid, rgxf};
+use ramseynet_graph::{compute_cid, rgxf, AdjacencyMatrix};
 use ramseynet_verifier::scoring::compute_score;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
@@ -11,7 +12,7 @@ use tracing::{error, info, warn};
 use crate::client::ServerClient;
 use crate::error::SearchError;
 use crate::search::Searcher;
-use crate::viz::{NoOpObserver, VizHandle, VizObserver};
+use crate::viz::{CollectorObserver, DiscoveryCollector, VizHandle, VizObserver};
 
 /// Configuration for the worker loop.
 pub struct WorkerConfig {
@@ -21,6 +22,9 @@ pub struct WorkerConfig {
     pub max_iters: u64,
     pub no_backoff: bool,
     pub offline: bool,
+    /// Shared pool for leaderboard-seeded init strategy. When `Some`, the
+    /// worker refreshes this pool from the server each round.
+    pub leaderboard_pool: Option<Arc<Mutex<Vec<AdjacencyMatrix>>>>,
 }
 
 /// Run the search worker loop.
@@ -64,6 +68,24 @@ pub async fn run_worker(
             }
         }
 
+        // Refresh leaderboard pool if using leaderboard init
+        if let Some(ref pool) = config.leaderboard_pool {
+            match client.get_leaderboard_graphs(k, ell, target_n, 20).await {
+                Ok(rgxfs) => {
+                    let graphs: Vec<AdjacencyMatrix> = rgxfs
+                        .iter()
+                        .filter_map(|r| rgxf::from_json(r).ok())
+                        .collect();
+                    let count = graphs.len();
+                    *pool.lock().unwrap() = graphs;
+                    info!(count, "refreshed leaderboard seed pool");
+                }
+                Err(e) => {
+                    warn!("failed to fetch leaderboard graphs: {e}");
+                }
+            }
+        }
+
         info!(k, ell, target_n, "starting search round");
 
         let mut found = false;
@@ -80,21 +102,17 @@ pub async fn run_worker(
 
             info!(strategy, target_n, max_iters, "running search");
 
-            // Run search in blocking thread
+            // Run search in blocking thread with discovery collector
             let n = target_n;
             let searcher = Arc::clone(searcher);
             let mut search_rng = SmallRng::from_rng(&mut rng).unwrap();
             let viz = viz_handle.clone();
+            let collector = DiscoveryCollector::new();
+            let collector_for_search = collector.clone();
             let (result, score) = tokio::task::spawn_blocking(move || {
-                let result = match viz {
-                    Some(ref h) => {
-                        let obs = VizObserver::new(Arc::clone(h));
-                        searcher.search(n, k, ell, max_iters, &mut search_rng, &obs)
-                    }
-                    None => {
-                        searcher.search(n, k, ell, max_iters, &mut search_rng, &NoOpObserver)
-                    }
-                };
+                let viz_obs = viz.map(VizObserver::new);
+                let obs = CollectorObserver::new(collector_for_search, viz_obs);
+                let result = searcher.search(n, k, ell, max_iters, &mut search_rng, &obs);
                 let score = if result.valid {
                     Some(compute_score(&result.graph, &compute_cid(&result.graph)))
                 } else {
@@ -107,12 +125,26 @@ pub async fn run_worker(
 
             let elapsed = start.elapsed();
 
+            // Collect all mid-search discoveries
+            let mut discoveries = collector.drain();
+
+            // Add the final result if valid and not already collected (CID dedup)
             if let Some(score) = score {
-                // Submit to viz leaderboard with pre-computed score
+                let final_cid = compute_cid(&result.graph);
+                let seen_cids: HashSet<_> = discoveries.iter().map(|d| d.cid.clone()).collect();
+                if !seen_cids.contains(&final_cid) {
+                    discoveries.push(crate::viz::Discovery {
+                        graph: result.graph.clone(),
+                        score: score.clone(),
+                        cid: final_cid,
+                    });
+                }
+
+                // Submit final result to viz leaderboard
                 if let Some(ref vh) = viz_handle {
                     if let Some(entry) = vh.submit_discovery(
                         &result.graph, target_n, strategy, result.iterations,
-                        false, score.clone(),
+                        false, score,
                     ) {
                         info!(
                             strategy,
@@ -139,38 +171,7 @@ pub async fn run_worker(
                         "found valid graph!"
                     );
                 }
-
-                // Encode and submit to server
-                let rgxf_json = rgxf::to_json(&result.graph);
-                match client.submit(k, ell, target_n, rgxf_json).await {
-                    Ok(resp) => {
-                        let admitted = resp.admitted.unwrap_or(false);
-                        info!(
-                            graph_cid = %resp.graph_cid,
-                            verdict = %resp.verdict,
-                            admitted,
-                            rank = ?resp.rank,
-                            "submitted graph"
-                        );
-                        if admitted {
-                            info!("admitted to leaderboard! rank={}", resp.rank.unwrap_or(0));
-                            if let Some(ref vh) = viz_handle {
-                                vh.submit_discovery(
-                                    &result.graph, target_n, strategy, result.iterations,
-                                    true, score,
-                                );
-                            }
-                        }
-                        consecutive_failures = 0;
-                        found = true;
-                        break;
-                    }
-                    Err(e) => {
-                        error!("submit failed: {e}");
-                        consecutive_failures += 1;
-                    }
-                }
-            } else {
+            } else if discoveries.is_empty() {
                 warn!(
                     strategy,
                     target_n,
@@ -178,6 +179,45 @@ pub async fn run_worker(
                     elapsed_ms = elapsed.as_millis() as u64,
                     "no valid graph found"
                 );
+            }
+
+            // Submit all discoveries to server
+            if !discoveries.is_empty() {
+                info!(
+                    strategy,
+                    count = discoveries.len(),
+                    "submitting all discoveries to server"
+                );
+                for discovery in &discoveries {
+                    let rgxf_json = rgxf::to_json(&discovery.graph);
+                    match client.submit(k, ell, target_n, rgxf_json).await {
+                        Ok(resp) => {
+                            let admitted = resp.admitted.unwrap_or(false);
+                            info!(
+                                graph_cid = %resp.graph_cid,
+                                verdict = %resp.verdict,
+                                admitted,
+                                rank = ?resp.rank,
+                                "submitted graph"
+                            );
+                            if admitted {
+                                info!("admitted to leaderboard! rank={}", resp.rank.unwrap_or(0));
+                                if let Some(ref vh) = viz_handle {
+                                    vh.submit_discovery(
+                                        &discovery.graph, target_n, strategy, result.iterations,
+                                        true, discovery.score.clone(),
+                                    );
+                                }
+                            }
+                            consecutive_failures = 0;
+                            found = true;
+                        }
+                        Err(e) => {
+                            error!(graph_cid = %discovery.cid.to_hex(), "submit failed: {e}");
+                            consecutive_failures += 1;
+                        }
+                    }
+                }
             }
         }
 
@@ -249,16 +289,12 @@ async fn run_worker_offline(
             let searcher = Arc::clone(searcher);
             let mut search_rng = SmallRng::from_rng(&mut rng).unwrap();
             let viz = viz_handle.clone();
+            let collector = DiscoveryCollector::new();
+            let collector_for_search = collector.clone();
             let (result, score) = tokio::task::spawn_blocking(move || {
-                let result = match viz {
-                    Some(ref h) => {
-                        let obs = VizObserver::new(Arc::clone(h));
-                        searcher.search(n, k, ell, max_iters, &mut search_rng, &obs)
-                    }
-                    None => {
-                        searcher.search(n, k, ell, max_iters, &mut search_rng, &NoOpObserver)
-                    }
-                };
+                let viz_obs = viz.map(VizObserver::new);
+                let obs = CollectorObserver::new(collector_for_search, viz_obs);
+                let result = searcher.search(n, k, ell, max_iters, &mut search_rng, &obs);
                 let score = if result.valid {
                     Some(compute_score(&result.graph, &compute_cid(&result.graph)))
                 } else {
@@ -270,6 +306,8 @@ async fn run_worker_offline(
             .unwrap();
 
             let elapsed = start.elapsed();
+            // Discoveries already forwarded to viz via CollectorObserver; just drain to drop
+            let _discoveries = collector.drain();
 
             if let Some(score) = score {
                 if let Some(ref vh) = viz_handle {
