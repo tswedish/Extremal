@@ -9,8 +9,61 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use ramseynet_graph::{rgxf, AdjacencyMatrix};
+use ramseynet_verifier::clique::find_clique_witness;
 use serde::Serialize;
 use tokio::sync::{broadcast, watch};
+
+/// Rarity tier for a valid Ramsey graph based on clique/independence proximity.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RarityTier {
+    Common,
+    Uncommon,
+    Rare,
+    Legendary,
+}
+
+/// Compute the rarity tier of a valid R(k, ell) graph.
+///
+/// Returns `(tier, omega, alpha)` where omega is the clique number and
+/// alpha is the independence number.
+pub fn compute_rarity(
+    graph: &AdjacencyMatrix,
+    k: u32,
+    ell: u32,
+    is_record: bool,
+) -> (RarityTier, u32, u32) {
+    // Find omega: largest clique in G
+    let mut omega = 1;
+    for size in (2..k).rev() {
+        if find_clique_witness(graph, size).is_some() {
+            omega = size;
+            break;
+        }
+    }
+
+    // Find alpha: largest independent set = largest clique in complement
+    let comp = graph.complement();
+    let mut alpha = 1;
+    for size in (2..ell).rev() {
+        if find_clique_witness(&comp, size).is_some() {
+            alpha = size;
+            break;
+        }
+    }
+
+    let tier = if is_record {
+        RarityTier::Legendary
+    } else if omega == k - 1 && alpha == ell - 1 {
+        RarityTier::Rare
+    } else if omega == k - 1 || alpha == ell - 1 {
+        RarityTier::Uncommon
+    } else {
+        RarityTier::Common
+    };
+
+    (tier, omega, alpha)
+}
 
 /// A snapshot of the current search state, sent to the browser at ~20fps.
 #[derive(Clone, Debug, Serialize)]
@@ -26,6 +79,7 @@ pub struct SearchSnapshot {
     pub edges: u32,
     pub violation_score: u32,
     pub elapsed_ms: u64,
+    pub throughput: f64,
 }
 
 /// A valid graph that was pinned (discovered) during search.
@@ -37,6 +91,9 @@ pub struct PinnedGraph {
     pub iteration: u64,
     pub is_record: bool,
     pub found_at_ms: u64,
+    pub rarity: RarityTier,
+    pub omega: u32,
+    pub alpha: u32,
 }
 
 /// Tagged message sent over the WebSocket.
@@ -79,6 +136,7 @@ impl VizHandle {
         let _ = self.snapshot_tx.send(Some(snapshot));
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn pin_graph(
         &self,
         graph: &AdjacencyMatrix,
@@ -86,6 +144,9 @@ impl VizHandle {
         strategy: &str,
         iteration: u64,
         is_record: bool,
+        rarity: RarityTier,
+        omega: u32,
+        alpha: u32,
     ) {
         let pinned = PinnedGraph {
             graph: rgxf::to_json(graph),
@@ -94,6 +155,9 @@ impl VizHandle {
             iteration,
             is_record,
             found_at_ms: self.start_time.elapsed().as_millis() as u64,
+            rarity,
+            omega,
+            alpha,
         };
         let _ = self.pinned_tx.send(pinned);
     }
@@ -153,13 +217,20 @@ impl SearchObserver for NoOpObserver {
 pub struct VizObserver {
     handle: Arc<VizHandle>,
     last_update: Mutex<Instant>,
+    /// EMA state: (last_iteration, last_instant, smoothed_throughput)
+    ema: Mutex<(u64, Instant, f64)>,
 }
+
+/// EMA smoothing factor — 0.3 reacts quickly (settles in ~3 ticks / ~150ms).
+const EMA_ALPHA: f64 = 0.3;
 
 impl VizObserver {
     pub fn new(handle: Arc<VizHandle>) -> Self {
+        let now = Instant::now();
         Self {
             handle,
-            last_update: Mutex::new(Instant::now()),
+            last_update: Mutex::new(now),
+            ema: Mutex::new((0, now, 0.0)),
         }
     }
 }
@@ -184,6 +255,28 @@ impl SearchObserver for VizObserver {
         }
         *last = now;
 
+        let elapsed_ms = self.handle.elapsed_ms();
+
+        // Compute throughput as EMA of instantaneous rate between ticks
+        let throughput = {
+            let mut ema = self.ema.lock().unwrap();
+            let dt_secs = now.duration_since(ema.1).as_secs_f64();
+            let d_iters = iteration.saturating_sub(ema.0);
+            let instant_rate = if dt_secs > 0.0 {
+                d_iters as f64 / dt_secs
+            } else {
+                ema.2
+            };
+            // Reset EMA on iteration drops (new search round) or first tick
+            let smoothed = if iteration < ema.0 || ema.2 == 0.0 {
+                instant_rate
+            } else {
+                EMA_ALPHA * instant_rate + (1.0 - EMA_ALPHA) * ema.2
+            };
+            *ema = (iteration, now, smoothed);
+            smoothed
+        };
+
         let snapshot = SearchSnapshot {
             graph: rgxf::to_json(graph),
             n,
@@ -195,7 +288,8 @@ impl SearchObserver for VizObserver {
             valid,
             edges: graph.num_edges() as u32,
             violation_score,
-            elapsed_ms: self.handle.elapsed_ms(),
+            elapsed_ms,
+            throughput,
         };
         self.handle.update_snapshot(snapshot);
     }

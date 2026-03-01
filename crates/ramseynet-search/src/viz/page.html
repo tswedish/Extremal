@@ -119,6 +119,44 @@ header h1 {
   border-color: #ca8a04;
   background: #1a1810;
 }
+.pinned-item.rarity-common { border-color: #8888a0; }
+.pinned-item.rarity-uncommon { border-color: #22c55e; }
+.pinned-item.rarity-rare { border-color: #818cf8; }
+.pinned-item.rarity-legendary { border-color: #eab308; background: #1a1810; }
+
+.rarity-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.rarity-badge.common { background: #8888a020; color: #8888a0; }
+.rarity-badge.uncommon { background: #22c55e20; color: #22c55e; }
+.rarity-badge.rare { background: #818cf820; color: #818cf8; }
+.rarity-badge.legendary { background: #eab30820; color: #eab308; }
+
+.rarity-filters {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 4px;
+}
+.filter-chip {
+  background: #1a1a2a;
+  border: 1px solid #2a2a3a;
+  color: #8888a0;
+  font-size: 10px;
+  font-family: inherit;
+  padding: 3px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.filter-chip:hover { border-color: #4a4a6a; }
+.filter-chip.active { background: #6366f1; border-color: #6366f1; color: #fff; }
 .pinned-thumb {
   border-radius: 4px;
   flex-shrink: 0;
@@ -173,6 +211,7 @@ header h1 {
   <div class="stat"><span class="stat-label">Edges</span><span class="stat-value" id="s-edges">--</span></div>
   <div class="stat"><span class="stat-label">Violations</span><span class="stat-value" id="s-violations">--</span></div>
   <div class="stat"><span class="stat-label">Valid</span><span class="stat-value" id="s-valid">--</span></div>
+  <div class="stat"><span class="stat-label">Speed</span><span class="stat-value" id="s-speed">--</span></div>
   <div class="stat"><span class="stat-label">Elapsed</span><span class="stat-value" id="s-elapsed">--</span></div>
 </div>
 <div class="main">
@@ -181,6 +220,13 @@ header h1 {
   </div>
   <div class="pinned-panel">
     <div class="pinned-header">Discoveries <span id="pinned-count">(0)</span></div>
+    <div class="rarity-filters" id="rarity-filters">
+      <button class="filter-chip active" data-filter="all">All</button>
+      <button class="filter-chip" data-filter="common">Common</button>
+      <button class="filter-chip" data-filter="uncommon">Uncommon</button>
+      <button class="filter-chip" data-filter="rare">Rare</button>
+      <button class="filter-chip" data-filter="legendary">Legend</button>
+    </div>
     <div class="pinned-list" id="pinned-list">
       <div class="empty-msg">Waiting for valid graphs...</div>
     </div>
@@ -374,6 +420,7 @@ function handleSnapshot(snap) {
   valid.textContent = snap.valid ? 'YES' : 'no';
   valid.className = 'stat-value ' + (snap.valid ? 'valid' : 'invalid');
 
+  $('s-speed').textContent = snap.throughput > 0 ? formatNum(Math.round(snap.throughput)) + '/s' : '--';
   $('s-elapsed').textContent = formatElapsed(snap.elapsed_ms);
 
   // Progress bar
@@ -385,6 +432,12 @@ function handleSnapshot(snap) {
   drawMatrix(canvas, snap.graph, size);
 }
 
+const RARITY_COLORS = {
+  common: '#8888a0', uncommon: '#22c55e', rare: '#818cf8', legendary: '#eab308'
+};
+
+let activeFilter = 'all';
+
 function handlePinned(pinned) {
   discoveries++;
   pinnedCount.textContent = '(' + discoveries + ')';
@@ -393,8 +446,15 @@ function handlePinned(pinned) {
   const empty = pinnedList.querySelector('.empty-msg');
   if (empty) empty.remove();
 
+  const rarity = pinned.rarity || 'common';
   const item = document.createElement('div');
-  item.className = 'pinned-item' + (pinned.is_record ? ' record' : '');
+  item.className = 'pinned-item rarity-' + rarity;
+  item.dataset.rarity = rarity;
+
+  // Apply current filter
+  if (activeFilter !== 'all' && activeFilter !== rarity) {
+    item.style.display = 'none';
+  }
 
   const thumb = document.createElement('canvas');
   thumb.className = 'pinned-thumb';
@@ -402,17 +462,36 @@ function handlePinned(pinned) {
 
   const info = document.createElement('div');
   info.className = 'pinned-info';
-  const badge = pinned.is_record ? ' <span style="color:#eab308">RECORD</span>' : '';
+  const rarityLabel = rarity.charAt(0).toUpperCase() + rarity.slice(1);
+  const badge = '<span class="rarity-badge ' + rarity + '">' + rarityLabel + '</span>';
+  const oa = ' <span class="iter-label">\u03c9=' + (pinned.omega||0) + ' \u03b1=' + (pinned.alpha||0) + '</span>';
   info.innerHTML =
-    '<span class="n-label">n=' + pinned.n + '</span>' + badge + '<br>' +
-    '<span class="strategy-label">' + pinned.strategy + '</span> ' +
-    '<span class="iter-label">iter ' + formatNum(pinned.iteration) + '</span><br>' +
-    '<span class="iter-label">' + formatElapsed(pinned.found_at_ms) + '</span>';
+    '<span class="n-label" style="color:' + RARITY_COLORS[rarity] + '">n=' + pinned.n + '</span>' + badge + '<br>' +
+    '<span class="strategy-label">' + pinned.strategy + '</span>' + oa + '<br>' +
+    '<span class="iter-label">iter ' + formatNum(pinned.iteration) + ' \u2022 ' + formatElapsed(pinned.found_at_ms) + '</span>';
 
   item.appendChild(thumb);
   item.appendChild(info);
   pinnedList.prepend(item);
 }
+
+// Filter chips
+document.getElementById('rarity-filters').addEventListener('click', function(e) {
+  const chip = e.target.closest('.filter-chip');
+  if (!chip) return;
+  activeFilter = chip.dataset.filter;
+  // Update active state
+  this.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  // Filter items
+  pinnedList.querySelectorAll('.pinned-item').forEach(item => {
+    if (activeFilter === 'all' || item.dataset.rarity === activeFilter) {
+      item.style.display = '';
+    } else {
+      item.style.display = 'none';
+    }
+  });
+});
 
 // Handle resize
 window.addEventListener('resize', () => {

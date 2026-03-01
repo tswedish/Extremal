@@ -10,7 +10,7 @@ use tracing::{error, info, warn};
 use crate::client::ServerClient;
 use crate::error::SearchError;
 use crate::search::Searcher;
-use crate::viz::{NoOpObserver, VizHandle, VizObserver};
+use crate::viz::{compute_rarity, NoOpObserver, VizHandle, VizObserver};
 
 /// Configuration for the worker loop.
 pub struct WorkerConfig {
@@ -116,18 +116,24 @@ pub async fn run_worker(
             let elapsed = start.elapsed();
 
             if result.valid {
+                let (rarity, omega, alpha) =
+                    compute_rarity(&result.graph, k, ell, false);
                 info!(
                     strategy,
                     target_n,
                     iterations = result.iterations,
                     edges = result.graph.num_edges(),
                     elapsed_ms = elapsed.as_millis() as u64,
+                    ?rarity, omega, alpha,
                     "found valid graph!"
                 );
 
                 // Pin as valid discovery (not yet known if record)
                 if let Some(ref vh) = viz_handle {
-                    vh.pin_graph(&result.graph, target_n, strategy, result.iterations, false);
+                    vh.pin_graph(
+                        &result.graph, target_n, strategy, result.iterations,
+                        false, rarity.clone(), omega, alpha,
+                    );
                 }
 
                 // Encode and submit
@@ -144,7 +150,12 @@ pub async fn run_worker(
                         if is_record {
                             info!("new record! n={target_n}");
                             if let Some(ref vh) = viz_handle {
-                                vh.pin_graph(&result.graph, target_n, strategy, result.iterations, true);
+                                let (rec_rarity, rec_omega, rec_alpha) =
+                                    compute_rarity(&result.graph, k, ell, true);
+                                vh.pin_graph(
+                                    &result.graph, target_n, strategy, result.iterations,
+                                    true, rec_rarity, rec_omega, rec_alpha,
+                                );
                             }
                         }
                         consecutive_failures = 0;
@@ -252,6 +263,8 @@ async fn run_worker_offline(
             let elapsed = start.elapsed();
 
             if result.valid {
+                let (rarity, omega, alpha) =
+                    compute_rarity(&result.graph, k, ell, false);
                 info!(
                     strategy,
                     target_n,
@@ -259,11 +272,15 @@ async fn run_worker_offline(
                     iterations = result.iterations,
                     edges = result.graph.num_edges(),
                     elapsed_ms = elapsed.as_millis() as u64,
+                    ?rarity, omega, alpha,
                     "found valid graph (offline)"
                 );
 
                 if let Some(ref vh) = viz_handle {
-                    vh.pin_graph(&result.graph, target_n, strategy, result.iterations, false);
+                    vh.pin_graph(
+                        &result.graph, target_n, strategy, result.iterations,
+                        false, rarity, omega, alpha,
+                    );
                 }
             } else {
                 warn!(
