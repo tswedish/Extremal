@@ -257,10 +257,18 @@ pub struct Discovery {
     pub cid: GraphCid,
 }
 
-/// Thread-safe collector that accumulates mid-search discoveries.
+/// Thread-safe collector that keeps only the best `capacity` discoveries,
+/// sorted by score (best first) with CID dedup. Acts as a mini-leaderboard
+/// so the worker only submits competitive graphs to the server.
 #[derive(Clone)]
 pub struct DiscoveryCollector {
-    discoveries: Arc<Mutex<Vec<Discovery>>>,
+    inner: Arc<Mutex<CollectorInner>>,
+}
+
+struct CollectorInner {
+    entries: Vec<Discovery>,
+    cid_set: std::collections::HashSet<GraphCid>,
+    capacity: usize,
 }
 
 impl Default for DiscoveryCollector {
@@ -271,18 +279,55 @@ impl Default for DiscoveryCollector {
 
 impl DiscoveryCollector {
     pub fn new() -> Self {
+        Self::with_capacity(100)
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            discoveries: Arc::new(Mutex::new(Vec::new())),
+            inner: Arc::new(Mutex::new(CollectorInner {
+                entries: Vec::new(),
+                cid_set: std::collections::HashSet::new(),
+                capacity,
+            })),
         }
     }
 
+    /// Insert a discovery, maintaining sorted order and bounded capacity.
+    /// Duplicates (by CID) are silently ignored.
     pub fn push(&self, discovery: Discovery) {
-        self.discoveries.lock().unwrap().push(discovery);
+        let mut inner = self.inner.lock().unwrap();
+
+        // CID dedup
+        if inner.cid_set.contains(&discovery.cid) {
+            return;
+        }
+
+        // Find insertion position (sorted by score ascending = best first)
+        let pos = inner
+            .entries
+            .binary_search_by(|e| e.score.cmp(&discovery.score))
+            .unwrap_or_else(|p| p);
+
+        // Reject if full and this would go past capacity
+        if pos >= inner.capacity && inner.entries.len() >= inner.capacity {
+            return;
+        }
+
+        inner.cid_set.insert(discovery.cid.clone());
+        inner.entries.insert(pos, discovery);
+
+        // Evict worst if over capacity
+        if inner.entries.len() > inner.capacity {
+            let evicted = inner.entries.pop().unwrap();
+            inner.cid_set.remove(&evicted.cid);
+        }
     }
 
-    /// Drain all collected discoveries, leaving the collector empty.
+    /// Drain all collected discoveries (best first), leaving the collector empty.
     pub fn drain(&self) -> Vec<Discovery> {
-        mem::take(&mut *self.discoveries.lock().unwrap())
+        let mut inner = self.inner.lock().unwrap();
+        inner.cid_set.clear();
+        mem::take(&mut inner.entries)
     }
 }
 

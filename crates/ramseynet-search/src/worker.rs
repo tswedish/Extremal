@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -125,21 +124,20 @@ pub async fn run_worker(
 
             let elapsed = start.elapsed();
 
-            // Collect all mid-search discoveries
-            let mut discoveries = collector.drain();
-
-            // Add the final result if valid and not already collected (CID dedup)
-            if let Some(score) = score {
+            // Add the final result to collector (dedup + bounded insert handled internally)
+            if let Some(ref score) = score {
                 let final_cid = compute_cid(&result.graph);
-                let seen_cids: HashSet<_> = discoveries.iter().map(|d| d.cid.clone()).collect();
-                if !seen_cids.contains(&final_cid) {
-                    discoveries.push(crate::viz::Discovery {
-                        graph: result.graph.clone(),
-                        score: score.clone(),
-                        cid: final_cid,
-                    });
-                }
+                collector.push(crate::viz::Discovery {
+                    graph: result.graph.clone(),
+                    score: score.clone(),
+                    cid: final_cid,
+                });
+            }
 
+            // Drain best discoveries (already sorted, bounded to 100, CID-deduped)
+            let discoveries = collector.drain();
+
+            if let Some(score) = score {
                 // Submit final result to viz leaderboard
                 if let Some(ref vh) = viz_handle {
                     if let Some(entry) = vh.submit_discovery(
