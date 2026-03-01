@@ -2,7 +2,7 @@
 //!
 //! When `--viz-port` is set, an axum server streams search snapshots
 //! to a browser over WebSocket at ~20fps. Valid graphs are scored and
-//! ranked in a top-10 leaderboard.
+//! ranked in a top-N leaderboard (capacity 100, display limit selectable in UI).
 
 pub mod server;
 
@@ -28,6 +28,8 @@ pub struct SearchSnapshot {
     pub valid: bool,
     pub edges: u32,
     pub violation_score: u32,
+    pub k_cliques: Option<u64>,
+    pub ell_indsets: Option<u64>,
     pub elapsed_ms: u64,
     pub throughput: f64,
 }
@@ -141,7 +143,7 @@ impl VizHandle {
         let (leaderboard_tx, _) = watch::channel(Vec::new());
         Self {
             snapshot_tx,
-            leaderboard: Mutex::new(Leaderboard::new(10)),
+            leaderboard: Mutex::new(Leaderboard::new(100)),
             leaderboard_tx,
             start_time: Instant::now(),
         }
@@ -204,30 +206,29 @@ impl VizHandle {
     }
 }
 
-/// Trait for observing search progress. Implementations must be Send + Sync
-/// so they can be passed into `spawn_blocking`.
-#[allow(clippy::too_many_arguments)]
-pub trait SearchObserver: Send + Sync {
-    fn on_progress(
-        &self,
-        graph: &AdjacencyMatrix,
-        n: u32,
-        k: u32,
-        ell: u32,
-        strategy: &str,
-        iteration: u64,
-        max_iters: u64,
-        valid: bool,
-        violation_score: u32,
-    );
+/// Bundled progress info passed to observers.
+pub struct ProgressInfo<'a> {
+    pub graph: &'a AdjacencyMatrix,
+    pub n: u32,
+    pub k: u32,
+    pub ell: u32,
+    pub strategy: &'a str,
+    pub iteration: u64,
+    pub max_iters: u64,
+    pub valid: bool,
+    pub violation_score: u32,
+    pub k_cliques: Option<u64>,
+    pub ell_indsets: Option<u64>,
 }
 
-/// No-op observer — zero overhead when viz is disabled.
-pub struct NoOpObserver;
+/// Trait for observing search progress. Implementations must be Send + Sync
+/// so they can be passed into `spawn_blocking`.
+pub trait SearchObserver: Send + Sync {
+    fn on_progress(&self, info: &ProgressInfo);
 
-impl SearchObserver for NoOpObserver {
-    #[inline]
-    fn on_progress(
+    /// Called when a valid graph is found mid-search (e.g. during tree/beam search).
+    /// Default is a no-op. VizObserver submits immediately to the leaderboard.
+    fn on_valid_found(
         &self,
         _graph: &AdjacencyMatrix,
         _n: u32,
@@ -235,11 +236,16 @@ impl SearchObserver for NoOpObserver {
         _ell: u32,
         _strategy: &str,
         _iteration: u64,
-        _max_iters: u64,
-        _valid: bool,
-        _violation_score: u32,
     ) {
     }
+}
+
+/// No-op observer — zero overhead when viz is disabled.
+pub struct NoOpObserver;
+
+impl SearchObserver for NoOpObserver {
+    #[inline]
+    fn on_progress(&self, _info: &ProgressInfo) {}
 }
 
 /// Observer that throttles updates to ~20fps and sends them to VizHandle.
@@ -265,18 +271,7 @@ impl VizObserver {
 }
 
 impl SearchObserver for VizObserver {
-    fn on_progress(
-        &self,
-        graph: &AdjacencyMatrix,
-        n: u32,
-        k: u32,
-        ell: u32,
-        strategy: &str,
-        iteration: u64,
-        max_iters: u64,
-        valid: bool,
-        violation_score: u32,
-    ) {
+    fn on_progress(&self, info: &ProgressInfo) {
         let now = Instant::now();
         let mut last = self.last_update.lock().unwrap();
         if now.duration_since(*last).as_millis() < 50 {
@@ -290,36 +285,52 @@ impl SearchObserver for VizObserver {
         let throughput = {
             let mut ema = self.ema.lock().unwrap();
             let dt_secs = now.duration_since(ema.1).as_secs_f64();
-            let d_iters = iteration.saturating_sub(ema.0);
+            let d_iters = info.iteration.saturating_sub(ema.0);
             let instant_rate = if dt_secs > 0.0 {
                 d_iters as f64 / dt_secs
             } else {
                 ema.2
             };
             // Reset EMA on iteration drops (new search round) or first tick
-            let smoothed = if iteration < ema.0 || ema.2 == 0.0 {
+            let smoothed = if info.iteration < ema.0 || ema.2 == 0.0 {
                 instant_rate
             } else {
                 EMA_ALPHA * instant_rate + (1.0 - EMA_ALPHA) * ema.2
             };
-            *ema = (iteration, now, smoothed);
+            *ema = (info.iteration, now, smoothed);
             smoothed
         };
 
         let snapshot = SearchSnapshot {
-            graph: rgxf::to_json(graph),
-            n,
-            k,
-            ell,
-            strategy: strategy.to_string(),
-            iteration,
-            max_iters,
-            valid,
-            edges: graph.num_edges() as u32,
-            violation_score,
+            graph: rgxf::to_json(info.graph),
+            n: info.n,
+            k: info.k,
+            ell: info.ell,
+            strategy: info.strategy.to_string(),
+            iteration: info.iteration,
+            max_iters: info.max_iters,
+            valid: info.valid,
+            edges: info.graph.num_edges() as u32,
+            violation_score: info.violation_score,
+            k_cliques: info.k_cliques,
+            ell_indsets: info.ell_indsets,
             elapsed_ms,
             throughput,
         };
         self.handle.update_snapshot(snapshot);
+    }
+
+    fn on_valid_found(
+        &self,
+        graph: &AdjacencyMatrix,
+        n: u32,
+        _k: u32,
+        _ell: u32,
+        strategy: &str,
+        iteration: u64,
+    ) {
+        let score = ramseynet_verifier::scoring::compute_score(graph);
+        self.handle
+            .submit_discovery(graph, n, strategy, iteration, false, score);
     }
 }

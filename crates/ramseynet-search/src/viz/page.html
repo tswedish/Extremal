@@ -66,6 +66,68 @@ header h1 {
 .stat-value.highlight { color: #6366f1; }
 .stat-value.valid { color: #22c55e; }
 .stat-value.invalid { color: #ef4444; }
+.stat-value.warn { color: #f59e0b; }
+
+.chart-section {
+  background: #0e0e16;
+  border-bottom: 1px solid #1a1a2a;
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+  max-height: 160px;
+}
+.chart-section.collapsed {
+  max-height: 28px;
+}
+.chart-section.collapsed #history-chart {
+  display: none;
+}
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 20px;
+  height: 28px;
+}
+.chart-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #666680;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.chart-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.time-btn {
+  background: #1a1a2a;
+  border: 1px solid #2a2a3a;
+  color: #8888a0;
+  font-size: 10px;
+  font-family: inherit;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.time-btn:hover { border-color: #4a4a6a; color: #e0e0e8; }
+.time-btn.active { background: #6366f130; border-color: #6366f1; color: #6366f1; }
+.chart-toggle {
+  background: none;
+  border: 1px solid #2a2a3a;
+  color: #8888a0;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-left: 8px;
+}
+.chart-toggle:hover { border-color: #4a4a6a; color: #e0e0e8; }
+#history-chart {
+  width: 100%;
+  padding: 0 12px 4px 12px;
+}
 
 .main {
   display: flex;
@@ -181,6 +243,35 @@ header h1 {
   color: #444460;
   font-family: inherit;
 }
+.found-ago {
+  font-size: 9px;
+  color: #666680;
+}
+.found-ago.recent {
+  color: #22c55e;
+}
+.pinned-item.recent {
+  border-left: 2px solid #22c55e;
+  animation: recentPulse 2s ease-in-out infinite;
+}
+@keyframes recentPulse {
+  0%, 100% { border-left-color: #22c55e; }
+  50% { border-left-color: #22c55e60; }
+}
+
+.display-limit-select {
+  background: #1a1a2a;
+  border: 1px solid #2a2a3a;
+  color: #8888a0;
+  font-size: 10px;
+  font-family: inherit;
+  padding: 2px 4px;
+  border-radius: 3px;
+  margin-left: 8px;
+  cursor: pointer;
+}
+.display-limit-select:hover { border-color: #4a4a6a; color: #e0e0e8; }
+
 .empty-msg {
   padding: 20px;
   text-align: center;
@@ -282,16 +373,38 @@ header h1 {
   <div class="stat"><span class="stat-label">Iteration</span><span class="stat-value" id="s-iter">--</span></div>
   <div class="stat"><span class="stat-label">Edges</span><span class="stat-value" id="s-edges">--</span></div>
   <div class="stat"><span class="stat-label">Violations</span><span class="stat-value" id="s-violations">--</span></div>
+  <div class="stat"><span class="stat-label">k-cliques</span><span class="stat-value" id="s-kcliques">--</span></div>
+  <div class="stat"><span class="stat-label">l-indep</span><span class="stat-value" id="s-lindep">--</span></div>
   <div class="stat"><span class="stat-label">Valid</span><span class="stat-value" id="s-valid">--</span></div>
   <div class="stat"><span class="stat-label">Speed</span><span class="stat-value" id="s-speed">--</span></div>
   <div class="stat"><span class="stat-label">Elapsed</span><span class="stat-value" id="s-elapsed">--</span></div>
+</div>
+<div class="chart-section" id="chart-section">
+  <div class="chart-header">
+    <span class="chart-title">Score History</span>
+    <div class="chart-controls">
+      <button class="time-btn" data-window="30000">30s</button>
+      <button class="time-btn active" data-window="60000">1m</button>
+      <button class="time-btn" data-window="300000">5m</button>
+      <button class="time-btn" data-window="0">All</button>
+      <button class="chart-toggle" id="chart-toggle">_</button>
+    </div>
+  </div>
+  <canvas id="history-chart" height="120"></canvas>
 </div>
 <div class="main">
   <div class="matrix-panel">
     <canvas id="matrix-canvas" width="500" height="500"></canvas>
   </div>
   <div class="pinned-panel">
-    <div class="pinned-header">Top 10 Discoveries <span id="pinned-count"></span></div>
+    <div class="pinned-header">Discoveries <span id="pinned-count"></span>
+      <select class="display-limit-select" id="display-limit">
+        <option value="10" selected>Top 10</option>
+        <option value="25">Top 25</option>
+        <option value="50">Top 50</option>
+        <option value="0">All</option>
+      </select>
+    </div>
     <div class="pinned-list" id="pinned-list">
       <div class="empty-msg">Waiting for valid graphs...</div>
     </div>
@@ -302,6 +415,7 @@ header h1 {
   <div class="detail-panel" id="detail-panel"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script>
 // RGXF decoder (ported from web/src/lib/rgxf.ts)
 function decodeRgxf(rgxf) {
@@ -418,8 +532,12 @@ const statusText = document.getElementById('status-text');
 const progressFill = document.getElementById('progress-fill');
 const detailOverlay = document.getElementById('detail-overlay');
 const detailPanel = document.getElementById('detail-panel');
+const chartSection = document.getElementById('chart-section');
 let totalFinds = 0;
 let uniqueFinds = 0;
+let displayLimit = 10;
+let lastElapsedMs = 0;
+let lastLeaderboardEntries = [];
 // Map<cid, {entry, element}>
 const discoveryMap = new Map();
 
@@ -436,6 +554,16 @@ function formatNum(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
   return String(n);
+}
+
+function formatFoundAgo(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 5) return 'just now';
+  if (s < 60) return s + 's ago';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + (s % 60) + 's ago';
+  const h = Math.floor(m / 60);
+  return h + 'h ' + (m % 60) + 'm ago';
 }
 
 function formatAut(n) {
@@ -466,7 +594,164 @@ function rankBorderColor(rank) {
   return '#2a2a3a';
 }
 
-// WebSocket
+// --- Chart.js time history ---
+const MAX_CHART_POINTS = 3000;
+const chartData = {
+  violations: [],  // [{x: elapsed_s, y: value}]
+  kCliques: [],
+  ellIndsets: [],
+};
+let chartTimeWindow = 60000; // default 1m
+let chart = null;
+
+function initChart() {
+  if (typeof Chart === 'undefined') {
+    chartSection.style.display = 'none';
+    return;
+  }
+
+  const ctx = document.getElementById('history-chart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Violations',
+          data: [],
+          borderColor: '#ef4444',
+          backgroundColor: '#ef444420',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.1,
+          fill: false,
+        },
+        {
+          label: 'k-cliques',
+          data: [],
+          borderColor: '#f59e0b',
+          backgroundColor: '#f59e0b20',
+          borderWidth: 1,
+          pointRadius: 0,
+          tension: 0.1,
+          fill: false,
+        },
+        {
+          label: 'l-indep',
+          data: [],
+          borderColor: '#eab308',
+          backgroundColor: '#eab30820',
+          borderWidth: 1,
+          pointRadius: 0,
+          tension: 0.1,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'right',
+          labels: {
+            color: '#8888a0',
+            font: { size: 10, family: 'monospace' },
+            boxWidth: 12,
+            padding: 6,
+          },
+        },
+        tooltip: {
+          enabled: true,
+          bodyFont: { size: 10, family: 'monospace' },
+          titleFont: { size: 10, family: 'monospace' },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: false },
+          ticks: {
+            color: '#666680',
+            font: { size: 9, family: 'monospace' },
+            callback: function(v) { return (v / 1000).toFixed(0) + 's'; },
+            maxTicksLimit: 8,
+          },
+          grid: { color: '#1a1a2a' },
+        },
+        y: {
+          type: 'linear',
+          title: { display: false },
+          ticks: {
+            color: '#666680',
+            font: { size: 9, family: 'monospace' },
+            maxTicksLimit: 5,
+          },
+          grid: { color: '#1a1a2a' },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+}
+
+function pushChartPoint(arr, x, y) {
+  arr.push({x: x, y: y});
+  if (arr.length > MAX_CHART_POINTS) arr.shift();
+}
+
+function updateChart() {
+  if (!chart) return;
+
+  const now = chartData.violations.length > 0
+    ? chartData.violations[chartData.violations.length - 1].x
+    : 0;
+  const minX = chartTimeWindow > 0 ? now - chartTimeWindow : 0;
+
+  function filterWindow(arr) {
+    if (chartTimeWindow <= 0) return arr;
+    // Find first index >= minX
+    let start = 0;
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i].x >= minX) { start = i; break; }
+      start = i;
+    }
+    return arr.slice(start);
+  }
+
+  chart.data.datasets[0].data = filterWindow(chartData.violations);
+  chart.data.datasets[1].data = filterWindow(chartData.kCliques);
+  chart.data.datasets[2].data = filterWindow(chartData.ellIndsets);
+
+  if (chartTimeWindow > 0) {
+    chart.options.scales.x.min = minX;
+    chart.options.scales.x.max = undefined;
+  } else {
+    chart.options.scales.x.min = undefined;
+    chart.options.scales.x.max = undefined;
+  }
+
+  chart.update('none');
+}
+
+// Chart controls
+document.querySelectorAll('.time-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.time-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    chartTimeWindow = parseInt(btn.dataset.window, 10);
+    updateChart();
+  });
+});
+
+document.getElementById('chart-toggle').addEventListener('click', function() {
+  chartSection.classList.toggle('collapsed');
+  this.textContent = chartSection.classList.contains('collapsed') ? '+' : '_';
+});
+
+// --- WebSocket ---
 let ws;
 let reconnectDelay = 500;
 
@@ -500,6 +785,7 @@ function connect() {
 }
 
 function handleSnapshot(snap) {
+  lastElapsedMs = snap.elapsed_ms;
   // Update stats
   $('s-strategy').textContent = snap.strategy;
   $('s-n').textContent = snap.n;
@@ -510,6 +796,25 @@ function handleSnapshot(snap) {
   const viol = $('s-violations');
   viol.textContent = snap.violation_score;
   viol.className = 'stat-value ' + (snap.violation_score === 0 ? 'valid' : 'invalid');
+
+  // k-cliques and l-indep stats
+  const kc = $('s-kcliques');
+  if (snap.k_cliques != null) {
+    kc.textContent = snap.k_cliques;
+    kc.className = 'stat-value ' + (snap.k_cliques === 0 ? 'valid' : 'warn');
+  } else {
+    kc.textContent = '--';
+    kc.className = 'stat-value';
+  }
+
+  const li = $('s-lindep');
+  if (snap.ell_indsets != null) {
+    li.textContent = snap.ell_indsets;
+    li.className = 'stat-value ' + (snap.ell_indsets === 0 ? 'valid' : 'warn');
+  } else {
+    li.textContent = '--';
+    li.className = 'stat-value';
+  }
 
   const valid = $('s-valid');
   valid.textContent = snap.valid ? 'YES' : 'no';
@@ -525,32 +830,55 @@ function handleSnapshot(snap) {
   // Draw matrix
   const size = matrixSize();
   drawMatrix(canvas, snap.graph, size);
+
+  // Feed chart
+  if (chart) {
+    const t = snap.elapsed_ms;
+    pushChartPoint(chartData.violations, t, snap.violation_score);
+    if (snap.k_cliques != null) {
+      pushChartPoint(chartData.kCliques, t, snap.k_cliques);
+    }
+    if (snap.ell_indsets != null) {
+      pushChartPoint(chartData.ellIndsets, t, snap.ell_indsets);
+    }
+    updateChart();
+  }
 }
 
 function handleLeaderboard(msg) {
   // Full board replacement — server sends {type: "leaderboard", entries: [...]}
-  const entries = msg.entries || [];
+  lastLeaderboardEntries = msg.entries || [];
+  renderLeaderboard();
+}
+
+function renderLeaderboard() {
+  const entries = lastLeaderboardEntries;
 
   // Clear state
   discoveryMap.clear();
   pinnedList.innerHTML = '';
-  uniqueFinds = 0;
+  uniqueFinds = entries.length;
   totalFinds = 0;
+  for (const e of entries) totalFinds += e.times_found || 1;
 
-  if (entries.length === 0) {
+  const visible = displayLimit > 0 ? entries.slice(0, displayLimit) : entries;
+
+  if (visible.length === 0) {
     pinnedList.innerHTML = '<div class="empty-msg">Waiting for valid graphs...</div>';
     pinnedCount.textContent = '';
     return;
   }
 
-  for (const entry of entries) {
-    totalFinds += entry.times_found || 1;
-    uniqueFinds++;
+  for (const entry of visible) {
     const el = createEntryElement(entry);
     pinnedList.appendChild(el);
     discoveryMap.set(entry.cid, { entry: entry, element: el });
   }
-  pinnedCount.textContent = '(' + uniqueFinds + ' unique / ' + totalFinds + ' total)';
+
+  const showing = displayLimit > 0 ? Math.min(displayLimit, entries.length) : entries.length;
+  pinnedCount.textContent = '(showing ' + showing + ' of ' + uniqueFinds + ' unique / ' + totalFinds + ' total)';
+
+  updateFoundAgo();
 }
 
 function createEntryElement(entry) {
@@ -576,9 +904,12 @@ function createEntryElement(entry) {
     ' | C\u03c9=' + (score.c_omega||'?') + ' C\u03b1=' + (score.c_alpha||'?') +
     ' | Aut:' + formatAut(score.aut_order||0) + '</span>';
 
+  const age = lastElapsedMs > entry.found_at_ms ? lastElapsedMs - entry.found_at_ms : 0;
+  const foundAgoText = formatFoundAgo(age);
+
   info.innerHTML =
     rankBadge + '<span class="n-label">n=' + entry.n + '</span>' + dupBadge + '<br>' +
-    '<span class="strategy-label">' + entry.strategy + '</span><br>' +
+    '<span class="strategy-label">' + entry.strategy + '</span> <span class="found-ago" data-found-at="' + entry.found_at_ms + '">' + foundAgoText + '</span><br>' +
     scoreLine + '<br>' +
     '<span class="cid-label">' + shortCid + '\u2026</span>';
 
@@ -641,6 +972,45 @@ window.addEventListener('resize', () => {
   // Redraw at new size on next snapshot
 });
 
+// Display limit selector
+document.getElementById('display-limit').addEventListener('change', function() {
+  displayLimit = parseInt(this.value, 10);
+  renderLeaderboard();
+});
+
+// Live "found ago" timer + recency highlighting
+function updateFoundAgo() {
+  const spans = pinnedList.querySelectorAll('.found-ago');
+  if (spans.length === 0 || lastElapsedMs === 0) return;
+
+  // Compute ages for all visible entries
+  const ages = [];
+  spans.forEach(function(span) {
+    const foundAt = parseInt(span.dataset.foundAt, 10);
+    const age = lastElapsedMs > foundAt ? lastElapsedMs - foundAt : 0;
+    ages.push(age);
+  });
+
+  // Median-based recency threshold
+  const sorted = ages.slice().sort(function(a, b) { return a - b; });
+  const median = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)] : 0;
+  const recentThreshold = Math.min(median, 30000);
+
+  spans.forEach(function(span, i) {
+    const age = ages[i];
+    span.textContent = formatFoundAgo(age);
+    const isRecent = age < recentThreshold;
+    span.classList.toggle('recent', isRecent);
+    // Update parent .pinned-item recency class
+    const item = span.closest('.pinned-item');
+    if (item) item.classList.toggle('recent', isRecent);
+  });
+}
+
+setInterval(updateFoundAgo, 1000);
+
+// Init
+initChart();
 connect();
 </script>
 </body>
