@@ -9,9 +9,46 @@
 	let loading = $state(true);
 	let error = $state('');
 	let flashCids = $state<Set<string>>(new Set());
+	let now = $state(Date.now());
+
+	// Tick every 5s so recency backgrounds update (fast for <1min bright green)
+	const tickInterval = setInterval(() => { now = Date.now(); }, 5_000);
+	onDestroy(() => clearInterval(tickInterval));
 
 	// Track previous CIDs to detect new entries on refresh
 	let prevCids = new Set<string>();
+
+	/** Format admitted time: relative if <8h, absolute otherwise */
+	function formatAdmitted(admittedAt: string): string {
+		const ageMs = now - new Date(admittedAt).getTime();
+		if (ageMs < 0) return 'just now';
+		if (ageMs < 60_000) return `${Math.floor(ageMs / 1000)}s ago`;
+		if (ageMs < 3_600_000) return `${Math.floor(ageMs / 60_000)}m ago`;
+		if (ageMs < 8 * 3_600_000) return `${(ageMs / 3_600_000).toFixed(1)}h ago`;
+		return new Date(admittedAt).toLocaleString();
+	}
+
+	/** Recency background: green → yellow → gray → transparent over 8 hours */
+	function recencyStyle(admittedAt: string): string {
+		const ageMs = now - new Date(admittedAt).getTime();
+		const MAX_MS = 8 * 60 * 60 * 1000; // 8 hours
+		if (ageMs >= MAX_MS || ageMs < 0) return '';
+		// Bright green for entries < 5 minutes old
+		const BRIGHT_MS = 5 * 60_000;
+		if (ageMs < BRIGHT_MS) {
+			const fade = ageMs / BRIGHT_MS; // 0 → 1 over 5 minutes
+			const alpha = 0.35 - 0.17 * fade; // 0.35 → 0.18
+			return `background-color: hsla(140, 80%, 50%, ${alpha.toFixed(3)})`;
+		}
+		const t = ageMs / MAX_MS; // 0 = just now, 1 = 8h ago
+		// Hue: 140 (green) → 50 (yellow) → 40 (warm gray)
+		const hue = t < 0.4
+			? 140 - (140 - 50) * (t / 0.4)    // green → yellow
+			: 50 - (50 - 40) * ((t - 0.4) / 0.6); // yellow → warm gray
+		// Opacity: 0.18 → 0 (cubic fade for steeper dropoff)
+		const alpha = 0.18 * (1 - t) * (1 - t) * (1 - t);
+		return `background-color: hsla(${Math.round(hue)}, 70%, 55%, ${alpha.toFixed(3)})`;
+	}
 
 	function refresh(k: number, l: number, n: number) {
 		getLeaderboard(k, l, n)
@@ -146,7 +183,7 @@
 					</thead>
 					<tbody>
 						{#each detail.entries as entry (entry.graph_cid)}
-							<tr class:rank1={entry.rank === 1} class:flash={flashCids.has(entry.graph_cid)}>
+							<tr class:rank1={entry.rank === 1} class:flash={flashCids.has(entry.graph_cid)} style={recencyStyle(entry.admitted_at)}>
 								<td class="rank">{entry.rank}</td>
 								<td class="cid">
 									<a href="/submissions/{entry.graph_cid}">{entry.graph_cid.slice(0, 16)}...</a>
@@ -154,7 +191,7 @@
 								<td class="score">{entry.tier1_max}</td>
 								<td class="score">{entry.tier1_min}</td>
 								<td class="score">{entry.tier2_aut}</td>
-								<td class="timestamp">{new Date(entry.admitted_at).toLocaleString()}</td>
+								<td class="timestamp" title={new Date(entry.admitted_at).toLocaleString()}>{formatAdmitted(entry.admitted_at)}</td>
 							</tr>
 						{/each}
 					</tbody>
