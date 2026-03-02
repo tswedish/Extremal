@@ -2,22 +2,29 @@ import { untrack } from 'svelte';
 import { connectEvents, type EventMessage } from '$lib/api';
 
 const MAX_EVENTS = 50;
+const INITIAL_DELAY = 2000;
+const MAX_DELAY = 30000;
+
+type EventListener = (msg: EventMessage) => void;
 
 let events = $state<EventMessage[]>([]);
 let connected = $state(false);
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let reconnectDelay = 500;
+let reconnectDelay = INITIAL_DELAY;
+let intentionalClose = false;
+let refCount = 0;
+const listeners = new Set<EventListener>();
 
 function handleMessage(ev: MessageEvent) {
 	try {
 		const msg: EventMessage = JSON.parse(ev.data);
-		// untrack prevents this async callback from accidentally registering
-		// as a dependency or interfering with Svelte's scheduler during navigation
 		untrack(() => {
-			// Deduplicate by seq — guards against server replay overlap
 			if (events.some((e) => e.seq === msg.seq)) return;
 			events = [msg, ...events].slice(0, MAX_EVENTS);
+			for (const fn of listeners) {
+				try { fn(msg); } catch { /* listener errors shouldn't break the store */ }
+			}
 		});
 	} catch {
 		// ignore malformed messages
@@ -26,26 +33,30 @@ function handleMessage(ev: MessageEvent) {
 
 function handleOpen() {
 	connected = true;
-	reconnectDelay = 500;
+	reconnectDelay = INITIAL_DELAY;
 }
 
 function handleClose() {
 	connected = false;
 	ws = null;
-	scheduleReconnect();
+	if (!intentionalClose) {
+		scheduleReconnect();
+	}
 }
 
 function scheduleReconnect() {
-	if (reconnectTimer) return;
+	if (reconnectTimer || intentionalClose) return;
+	// Don't reconnect if the tab is hidden
+	if (typeof document !== 'undefined' && document.hidden) return;
 	reconnectTimer = setTimeout(() => {
 		reconnectTimer = null;
 		doConnect();
 	}, reconnectDelay);
-	reconnectDelay = Math.min(reconnectDelay * 1.5, 5000);
+	reconnectDelay = Math.min(reconnectDelay * 2, MAX_DELAY);
 }
 
 function doConnect() {
-	if (ws) return;
+	if (ws || intentionalClose) return;
 	try {
 		const lastSeq = events.length > 0 ? events[0].seq : 0;
 		const socket = connectEvents();
@@ -53,33 +64,69 @@ function doConnect() {
 		socket.onmessage = handleMessage;
 		socket.onopen = () => {
 			handleOpen();
-			// Send after_seq so the server replays only events we haven't seen
 			if (lastSeq > 0) socket.send(JSON.stringify({ after_seq: lastSeq }));
 		};
 		socket.onclose = handleClose;
-		socket.onerror = () => socket.close();
+		// Don't call socket.close() from onerror — the close event fires automatically
+		socket.onerror = () => {};
 	} catch {
-		// connectEvents can throw if window.location is unavailable (SSR)
 		ws = null;
 		scheduleReconnect();
 	}
 }
 
+function handleVisibility() {
+	if (document.hidden) return;
+	// Tab became visible — reconnect if disconnected
+	if (!ws && !intentionalClose && !reconnectTimer) {
+		reconnectDelay = INITIAL_DELAY;
+		doConnect();
+	}
+}
+
 export function connect() {
-	doConnect();
+	refCount++;
+	if (refCount === 1) {
+		intentionalClose = false;
+		if (typeof document !== 'undefined') {
+			document.addEventListener('visibilitychange', handleVisibility);
+		}
+		doConnect();
+	}
 }
 
 export function disconnect() {
-	if (reconnectTimer) {
-		clearTimeout(reconnectTimer);
-		reconnectTimer = null;
+	refCount = Math.max(0, refCount - 1);
+	if (refCount === 0) {
+		intentionalClose = true;
+		if (typeof document !== 'undefined') {
+			document.removeEventListener('visibilitychange', handleVisibility);
+		}
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+			reconnectTimer = null;
+		}
+		if (ws) {
+			ws.onclose = null;
+			ws.close();
+			ws = null;
+		}
+		connected = false;
 	}
-	if (ws) {
-		ws.onclose = null;
-		ws.close();
-		ws = null;
-	}
-	connected = false;
+}
+
+/**
+ * Subscribe to new events on the shared WebSocket.
+ * Automatically calls connect/disconnect for lifecycle management.
+ * Returns an unsubscribe function.
+ */
+export function subscribe(fn: EventListener): () => void {
+	listeners.add(fn);
+	connect();
+	return () => {
+		listeners.delete(fn);
+		disconnect();
+	};
 }
 
 export function getEvents(): EventMessage[] {

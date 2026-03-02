@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onDestroy } from 'svelte';
-	import { getLeaderboard, getLeaderboardGraphs, connectEvents, type LeaderboardDetail, type EventMessage, type RgxfJson } from '$lib/api';
+	import { getLeaderboard, getLeaderboardGraphs, type LeaderboardDetail, type EventMessage, type RgxfJson } from '$lib/api';
+	import { subscribe } from '$lib/stores/events.svelte';
 	import MatrixView from '$lib/components/MatrixView.svelte';
 	import CircleLayout from '$lib/components/CircleLayout.svelte';
 	import GraphThumb from '$lib/components/GraphThumb.svelte';
@@ -123,55 +124,24 @@
 		refresh(k, l, n);
 	});
 
-	// WebSocket subscription for live updates
-	let ws: WebSocket | null = null;
-
+	// Subscribe to shared WebSocket for live updates
 	$effect(() => {
 		const k = Number(page.params.k);
 		const l = Number(page.params.l);
 		const n = Number(page.params.n);
 
-		// Clean up previous connection
-		if (ws) {
-			ws.onclose = null;
-			ws.close();
-			ws = null;
-		}
-
-		const socket = connectEvents();
-		ws = socket;
-
-		socket.onmessage = (ev: MessageEvent) => {
-			try {
-				const msg: EventMessage = JSON.parse(ev.data);
-				if (msg.event_type === 'leaderboard.admitted') {
-					const payload = typeof msg.payload === 'string'
-						? JSON.parse(msg.payload)
-						: msg.payload;
-					// Only refresh if this event matches our leaderboard
-					if (payload.k === k && payload.ell === l && payload.n === n) {
-						refresh(k, l, n);
-					}
+		const unsub = subscribe((msg: EventMessage) => {
+			if (msg.event_type === 'leaderboard.admitted') {
+				const payload = typeof msg.payload === 'string'
+					? JSON.parse(msg.payload)
+					: msg.payload;
+				if (payload.k === k && payload.ell === l && payload.n === n) {
+					refresh(k, l, n);
 				}
-			} catch {
-				// ignore malformed messages
 			}
-		};
+		});
 
-		socket.onerror = () => socket.close();
-
-		return () => {
-			socket.onclose = null;
-			socket.close();
-		};
-	});
-
-	onDestroy(() => {
-		if (ws) {
-			ws.onclose = null;
-			ws.close();
-			ws = null;
-		}
+		return unsub;
 	});
 </script>
 
