@@ -456,14 +456,16 @@ function drawMatrix(canvas, rgxf, size) {
   ctx.fillRect(0, 0, size, size);
   if (n === 0) return;
 
-  const labelSpace = n > 20 ? 16 : 24;
-  const cellArea = size - labelSpace;
-  const cellSize = cellArea / n;
+  // Rotated 45°: cell (i,j) → (j-i+(n-1), i+j) in a (2n-1)×(2n-1) grid
+  const gridW = 2 * n - 1;
+  const cellSize = size / gridW;
 
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      const x = labelSpace + j * cellSize;
-      const y = labelSpace + i * cellSize;
+      const rx = j - i + (n - 1);
+      const ry = i + j;
+      const px = rx * cellSize;
+      const py = ry * cellSize;
       if (i === j) {
         ctx.fillStyle = '#1a1a2e';
       } else if (matrix[i][j]) {
@@ -471,56 +473,86 @@ function drawMatrix(canvas, rgxf, size) {
       } else {
         ctx.fillStyle = '#0a0a0f';
       }
-      ctx.fillRect(x, y, cellSize, cellSize);
+      ctx.fillRect(px, py, cellSize + 0.5, cellSize + 0.5);
     }
   }
 
+  // Grid lines along diamond axes
   ctx.strokeStyle = '#2a2a3a';
   ctx.lineWidth = 0.5;
-  for (let i = 0; i <= n; i++) {
-    const pos = labelSpace + i * cellSize;
-    ctx.beginPath(); ctx.moveTo(labelSpace, pos); ctx.lineTo(size, pos); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(pos, labelSpace); ctx.lineTo(pos, size); ctx.stroke();
+  // Horizontal lines (constant i+j)
+  for (let s = 0; s < 2 * n; s++) {
+    const iMin = Math.max(0, s - n + 1);
+    const iMax = Math.min(s, n - 1);
+    if (iMin > iMax) continue;
+    const x0 = (s - iMax - iMax + (n - 1)) * cellSize;  // rx for j=s-iMax, i=iMax
+    const x1 = (s - iMin - iMin + (n - 1)) * cellSize + cellSize;
+    const y = s * cellSize;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
   }
-
-  const fontSize = Math.max(8, Math.min(12, cellSize * 0.6));
-  ctx.font = fontSize + 'px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#8888a0';
-  for (let i = 0; i < n; i++) {
-    const pos = labelSpace + (i + 0.5) * cellSize;
-    ctx.fillText(String(i), pos, labelSpace / 2);
-    ctx.fillText(String(i), labelSpace / 2, pos);
+  // Vertical lines (constant j-i)
+  for (let d = -(n - 1); d <= n; d++) {
+    const iMin = Math.max(0, -d);
+    const iMax = Math.min(n - 1, n - 1 - d);
+    if (iMin > iMax) continue;
+    const sMin = iMin + (iMin + d);
+    const sMax = iMax + (iMax + d);
+    const x = (d + (n - 1)) * cellSize;
+    ctx.beginPath(); ctx.moveTo(x, sMin * cellSize); ctx.lineTo(x, sMax * cellSize + cellSize); ctx.stroke();
   }
 }
 
-// Draw small thumbnail for pinned graphs
+// Draw small thumbnail for pinned graphs — rotated diamond with blur
 function drawThumb(canvas, rgxf, size) {
   const n = rgxf.n;
   const matrix = decodeRgxf(rgxf);
-  const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
   canvas.width = size * dpr;
   canvas.height = size * dpr;
   canvas.style.width = size + 'px';
   canvas.style.height = size + 'px';
-  ctx.scale(dpr, dpr);
 
-  ctx.fillStyle = '#141420';
-  ctx.fillRect(0, 0, size, size);
+  const gridW = 2 * n - 1;
+  const cellSize = size / gridW;
+
+  // Render sharp diamond to offscreen canvas
+  const off = document.createElement('canvas');
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext('2d');
+  octx.scale(dpr, dpr);
+  octx.fillStyle = '#141420';
+  octx.fillRect(0, 0, size, size);
   if (n === 0) return;
 
-  const cellSize = size / n;
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      if (i === j) continue;
-      if (matrix[i][j]) {
-        ctx.fillStyle = '#6366f1';
-        ctx.fillRect(j * cellSize, i * cellSize, cellSize, cellSize);
+      const rx = j - i + (n - 1);
+      const ry = i + j;
+      const px = rx * cellSize;
+      const py = ry * cellSize;
+      const cs = cellSize + 0.5;
+      if (i === j) {
+        octx.fillStyle = '#1a1a2e';
+      } else if (matrix[i][j]) {
+        octx.fillStyle = '#6366f1';
+      } else {
+        octx.fillStyle = '#0a0a0f';
       }
+      octx.fillRect(px, py, cs, cs);
     }
   }
+
+  // Composite: blur base + sharp overlay
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const blurPx = Math.max(0.8, size / 60);
+  ctx.filter = 'blur(' + blurPx + 'px)';
+  ctx.drawImage(off, 0, 0, size, size);
+  ctx.filter = 'none';
+  ctx.globalAlpha = 0.55;
+  ctx.drawImage(off, 0, 0, size, size);
+  ctx.globalAlpha = 1.0;
 }
 
 // State
