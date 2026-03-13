@@ -15,4 +15,4 @@
 #   search     Search worker (requires --k, --ell, --n)
 #   seed       Seed DB with test graphs
 
-exec bash "$(dirname "$0")/scripts/wsl-dev.sh" "$@"
+bash "$(dirname "$0")/scripts/wsl-dev.sh" "$@"
