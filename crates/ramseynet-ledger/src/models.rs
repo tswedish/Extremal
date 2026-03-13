@@ -50,12 +50,3 @@ pub struct LeaderboardSummary {
     pub top_cid: Option<String>,
     pub last_updated: Option<DateTime<Utc>>,
 }
-
-/// An event in the OESP-1 event log.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Event {
-    pub seq: i64,
-    pub event_type: String,
-    pub payload: serde_json::Value,
-    pub created_at: DateTime<Utc>,
-}

@@ -100,13 +100,6 @@ export interface SubmissionDetail {
 	score: Record<string, unknown> | null;
 }
 
-export interface EventMessage {
-	seq: number;
-	event_type: string;
-	payload: string | Record<string, unknown>;
-	created_at: string;
-}
-
 // ── API Functions ────────────────────────────────────────────────────
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -205,15 +198,4 @@ export async function getSubmission(cid: string): Promise<SubmissionDetail> {
 		throw new Error(err.error || `HTTP ${res.status}`);
 	}
 	return res.json();
-}
-
-// ── WebSocket ────────────────────────────────────────────────────────
-
-/**
- * Connect to the OESP-1 event stream.
- * Returns a WebSocket that emits JSON `EventMessage` frames.
- */
-export function connectEvents(): WebSocket {
-	const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-	return new WebSocket(`${protocol}//${window.location.host}${BASE}/events`);
 }

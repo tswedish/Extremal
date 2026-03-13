@@ -28,9 +28,8 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::parse();
 
     let ledger = Arc::new(Ledger::open(&config.db_path)?);
-    let (event_tx, _) = tokio::sync::broadcast::channel(256);
 
-    let state = Arc::new(AppState { ledger, event_tx });
+    let state = Arc::new(AppState { ledger });
     let app = ramseynet_server::create_router(state);
 
     let addr = format!("0.0.0.0:{}", config.port);

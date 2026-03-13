@@ -1,7 +1,7 @@
 //! Local SQLite ledger for RamseyNet transactions and state.
 //!
 //! Provides storage and retrieval for graph submissions,
-//! verification receipts, leaderboards, and events.
+//! verification receipts, and leaderboards.
 
 pub mod error;
 pub mod models;
@@ -199,21 +199,4 @@ mod tests {
         assert_eq!(ns, vec![5]);
     }
 
-    #[test]
-    fn event_log() {
-        let ledger = Ledger::open_in_memory().unwrap();
-
-        let e1 = ledger
-            .append_event("graph.submitted", &serde_json::json!({"cid": "abc"}))
-            .unwrap();
-        assert_eq!(e1.seq, 1);
-
-        let e2 = ledger
-            .append_event("graph.verified", &serde_json::json!({"v": "ok"}))
-            .unwrap();
-        assert_eq!(e2.seq, 2);
-
-        assert_eq!(ledger.list_events_since(0, 100).unwrap().len(), 2);
-        assert_eq!(ledger.list_events_since(1, 100).unwrap().len(), 1);
-    }
 }

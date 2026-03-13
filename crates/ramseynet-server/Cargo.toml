@@ -2,7 +2,7 @@
 name = "ramseynet-server"
 version = "0.1.0"
 edition = "2021"
-description = "Axum HTTP/WebSocket server for RamseyNet"
+description = "Axum HTTP server for RamseyNet"
 license = "MIT"
 
 [dependencies]
@@ -25,5 +25,3 @@ reqwest = { version = "0.12", features = ["json"] }
 ramseynet-graph = { path = "../ramseynet-graph" }
 ramseynet-verifier = { path = "../ramseynet-verifier" }
 ramseynet-ledger = { path = "../ramseynet-ledger" }
-tokio-tungstenite = "0.24"
-futures-util = "0.3"

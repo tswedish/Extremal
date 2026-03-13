@@ -10,7 +10,6 @@
 //! - Submit lifecycle (verify + store + leaderboard admission + events)
 //! - Leaderboard queries (list, detail, threshold)
 //! - K > L auto-canonicalization
-//! - WebSocket event streaming (OESP-1)
 
 use std::sync::Arc;
 
@@ -23,8 +22,7 @@ use serde_json::Value;
 /// Start a real server on port 0 (OS-assigned) with an in-memory ledger.
 async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
     let ledger = Arc::new(Ledger::open_in_memory().expect("in-memory ledger"));
-    let (event_tx, _) = tokio::sync::broadcast::channel(256);
-    let state = Arc::new(AppState { ledger, event_tx });
+    let state = Arc::new(AppState { ledger });
 
     let app = ramseynet_server::create_router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -397,54 +395,3 @@ async fn system_test_full_lifecycle() {
     eprintln!("\n✓ All 18 system tests passed!");
 }
 
-// ── WebSocket event stream test ──────────────────────────────────────
-
-#[tokio::test]
-async fn system_test_websocket_events() {
-    use futures_util::StreamExt;
-    use tokio_tungstenite::connect_async;
-
-    let (base, _handle) = start_server().await;
-    let client = reqwest::Client::new();
-    let ws_url = base.replace("http://", "ws://") + "/api/events";
-
-    // Connect WebSocket
-    let (mut ws, _resp) = connect_async(&ws_url).await.expect("WS connect failed");
-
-    // Give WS a moment to establish
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    // Submit a graph — should produce graph.submitted + graph.verified + leaderboard.admitted events
-    let resp = client
-        .post(format!("{base}/api/submit"))
-        .json(&serde_json::json!({
-            "k": 5,
-            "ell": 5,
-            "n": 5,
-            "graph": build_c5(),
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 201);
-
-    // Read the submit events
-    let mut event_types = Vec::new();
-    for _ in 0..3 {
-        let msg = tokio::time::timeout(std::time::Duration::from_secs(2), ws.next())
-            .await
-            .expect("WS timeout")
-            .expect("WS stream ended")
-            .expect("WS error");
-        let event: Value = serde_json::from_str(msg.to_text().unwrap()).unwrap();
-        event_types.push(event["event_type"].as_str().unwrap().to_string());
-    }
-
-    assert!(event_types.contains(&"graph.submitted".to_string()));
-    assert!(event_types.contains(&"graph.verified".to_string()));
-    assert!(event_types.contains(&"leaderboard.admitted".to_string()));
-    eprintln!("[PASS] WebSocket received submit lifecycle events: {:?}", event_types);
-
-    drop(ws);
-    eprintln!("\n✓ WebSocket event test passed!");
-}

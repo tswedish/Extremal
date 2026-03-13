@@ -477,59 +477,6 @@ impl Ledger {
         Ok(Some((submission, receipt, lb_entry)))
     }
 }
-
-// ── Event operations ─────────────────────────────────────────────────
-
-impl Ledger {
-    /// Append an event to the log and return it with its assigned sequence number.
-    pub fn append_event(
-        &self,
-        event_type: &str,
-        payload: &serde_json::Value,
-    ) -> Result<Event, LedgerError> {
-        let now = Utc::now();
-        let payload_json = serde_json::to_string(payload)?;
-        let conn = self.conn.lock().unwrap();
-        let seq: i64 = conn.query_row(
-            "INSERT INTO events (event_type, payload_json, created_at) VALUES (?1, ?2, ?3) RETURNING seq",
-            params![event_type, payload_json, now.to_rfc3339()],
-            |row| row.get(0),
-        )?;
-        Ok(Event {
-            seq,
-            event_type: event_type.to_string(),
-            payload: payload.clone(),
-            created_at: now,
-        })
-    }
-
-    /// List events with sequence number > `after_seq`, up to `limit`.
-    pub fn list_events_since(
-        &self,
-        after_seq: i64,
-        limit: u32,
-    ) -> Result<Vec<Event>, LedgerError> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT seq, event_type, payload_json, created_at FROM events WHERE seq > ?1 ORDER BY seq LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![after_seq, limit], |row| {
-            let payload_str: String = row.get(2)?;
-            Ok(Event {
-                seq: row.get(0)?,
-                event_type: row.get(1)?,
-                payload: serde_json::from_str(&payload_str).unwrap_or_default(),
-                created_at: parse_datetime(row.get::<_, String>(3)?),
-            })
-        })?;
-        let mut events = Vec::new();
-        for row in rows {
-            events.push(row?);
-        }
-        Ok(events)
-    }
-}
-
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /// Enforce k <= ell canonical form.

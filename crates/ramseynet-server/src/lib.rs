@@ -1,23 +1,18 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
-    },
+    extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use ramseynet_graph::{compute_cid, rgxf, RgxfJson};
-use ramseynet_ledger::{AdmitScore, Event, Ledger, LedgerError};
+use ramseynet_ledger::{AdmitScore, Ledger, LedgerError};
 use ramseynet_types::RamseyParams;
 use ramseynet_verifier::scoring::compute_score;
 use ramseynet_verifier::{verify_ramsey, VerifyRequest, VerifyResponse};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 
@@ -26,21 +21,6 @@ use tracing::{info, warn};
 /// Shared application state threaded through all handlers.
 pub struct AppState {
     pub ledger: Arc<Ledger>,
-    pub event_tx: broadcast::Sender<Event>,
-}
-
-impl AppState {
-    /// Store an event in the ledger and broadcast it to WebSocket subscribers.
-    pub fn emit_event(
-        &self,
-        event_type: &str,
-        payload: Value,
-    ) -> Result<Event, LedgerError> {
-        let event = self.ledger.append_event(event_type, &payload)?;
-        // Best-effort broadcast — ignore error if no receivers
-        let _ = self.event_tx.send(event.clone());
-        Ok(event)
-    }
 }
 
 // ── Error mapping ────────────────────────────────────────────────────
@@ -283,19 +263,6 @@ async fn submit_graph(
         }
     };
 
-    // Emit graph.submitted event (only for new submissions)
-    if !is_duplicate {
-        let _ = state.emit_event(
-            "graph.submitted",
-            json!({
-                "graph_cid": cid_hex,
-                "k": k,
-                "ell": ell,
-                "n": n,
-            }),
-        );
-    }
-
     // 4. Store verification receipt (skip if duplicate)
     let verdict_str = result.verdict.to_string();
     let reason = result.reason.clone();
@@ -321,19 +288,6 @@ async fn submit_graph(
         .unwrap()
         .map_err(map_ledger_error)?;
 
-        // Emit graph.verified event
-        let _ = state.emit_event(
-            "graph.verified",
-            json!({
-                "graph_cid": cid_hex,
-                "k": k,
-                "ell": ell,
-                "n": n,
-                "verdict": verdict_str,
-                "reason": reason,
-                "witness": witness,
-            }),
-        );
     }
 
     // 5. If accepted, compute score and try to admit to leaderboard
@@ -380,16 +334,6 @@ async fn submit_graph(
                 "admitted to leaderboard"
             );
 
-            let _ = state.emit_event(
-                "leaderboard.admitted",
-                json!({
-                    "k": k,
-                    "ell": ell,
-                    "n": n,
-                    "graph_cid": cid_hex,
-                    "rank": entry.rank,
-                }),
-            );
         } else {
             warn!(
                 graph_cid = %cid_hex,
@@ -457,67 +401,6 @@ async fn get_submission(
     })))
 }
 
-// ── WebSocket ───────────────────────────────────────────────────────
-
-/// OESP-1 WebSocket event stream.
-async fn ws_events(
-    State(state): State<Arc<AppState>>,
-    ws: WebSocketUpgrade,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, state))
-}
-
-async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
-    // Wait for optional initial message with replay request
-    let mut after_seq: i64 = 0;
-
-    // Try to read an initial message (with timeout)
-    let initial = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        socket.recv(),
-    )
-    .await;
-
-    if let Ok(Some(Ok(Message::Text(text)))) = initial {
-        if let Ok(v) = serde_json::from_str::<Value>(&text) {
-            if let Some(seq) = v.get("after_seq").and_then(|s| s.as_i64()) {
-                after_seq = seq;
-            }
-        }
-    }
-
-    // Subscribe before replay so no live events are missed during catch-up.
-    let mut rx = state.event_tx.subscribe();
-
-    // Replay missed events from DB
-    let ledger = state.ledger.clone();
-    let seq = after_seq;
-    if let Ok(events) =
-        tokio::task::spawn_blocking(move || ledger.list_events_since(seq, 1000))
-            .await
-            .unwrap()
-    {
-        for event in events {
-            let msg = serde_json::to_string(&event).unwrap();
-            if socket.send(Message::Text(msg.into())).await.is_err() {
-                return;
-            }
-        }
-    }
-    loop {
-        match rx.recv().await {
-            Ok(event) => {
-                let msg = serde_json::to_string(&event).unwrap();
-                if socket.send(Message::Text(msg.into())).await.is_err() {
-                    break;
-                }
-            }
-            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            Err(broadcast::error::RecvError::Closed) => break,
-        }
-    }
-}
-
 // ── Router ───────────────────────────────────────────────────────────
 
 /// Create the application router with shared state.
@@ -539,7 +422,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/submissions/{cid}", get(get_submission))
         .route("/api/verify", post(verify))
         .route("/api/submit", post(submit_graph))
-        .route("/api/events", get(ws_events))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }

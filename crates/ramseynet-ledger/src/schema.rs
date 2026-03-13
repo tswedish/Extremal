@@ -46,12 +46,6 @@ CREATE TABLE IF NOT EXISTS leaderboard (
     CHECK (k <= ell AND rank >= 1 AND rank <= 100)
 );
 
-CREATE TABLE IF NOT EXISTS events (
-    seq          INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type   TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    created_at   TEXT NOT NULL
-);
 ";
 
 /// Initialize the database schema. Enables WAL mode for better concurrent reads.

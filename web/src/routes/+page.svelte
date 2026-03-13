@@ -1,6 +1,4 @@
 <script lang="ts">
-	import EventFeed from '$lib/components/EventFeed.svelte';
-
 	let status = $state<string>('connecting...');
 
 	async function checkHealth() {
@@ -44,10 +42,6 @@
 		<p>Submit a candidate graph for verification and leaderboard ranking.</p>
 		<a href="/submit">Submit graph</a>
 	</div>
-</div>
-
-<div class="events-section">
-	<EventFeed maxEvents={15} />
 </div>
 
 <style>
@@ -119,7 +113,4 @@
 		font-weight: 500;
 	}
 
-	.events-section {
-		margin-top: 2.5rem;
-	}
 </style>

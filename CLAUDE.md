@@ -41,7 +41,7 @@ Rust workspace (`crates/`) + SvelteKit 2 (`web/`).
 | `ramseynet-graph` | RGXF encode/decode, AdjacencyMatrix, SHA-256 CID |
 | `ramseynet-verifier` | Clique/independent-set detection, 3-tier scoring, automorphism |
 | `ramseynet-ledger` | SQLite ledger: submissions, receipts, leaderboards, events |
-| `ramseynet-server` | Axum REST + WebSocket, full submit lifecycle |
+| `ramseynet-server` | Axum REST API, full submit lifecycle |
 | `ramseynet-search` | Standalone CLI: greedy, local search, simulated annealing, tree search |
 
 ## Leaderboard System
@@ -63,10 +63,9 @@ K ≤ L canonical form enforced everywhere (R(K,L) = R(L,K)).
 |-----------|---------|
 | `MatrixView` | Canvas adjacency matrix with witness overlay |
 | `CircleLayout` | SVG circle graph (ORS-1.0) |
-| `EventFeed` | Live OESP-1 event ticker with CID links |
 | `SubmitForm` | K/L/N inputs + RGXF paste + preview + submit |
 
-**Stores/utils:** `events.svelte.ts` (WebSocket + auto-reconnect), `rgxf.ts` (client-side RGXF decoder), `api.ts` (typed fetch wrappers).
+**Utils:** `rgxf.ts` (client-side RGXF decoder), `api.ts` (typed fetch wrappers).
 
 **Routes:**
 
@@ -74,7 +73,7 @@ K ≤ L canonical form enforced everywhere (R(K,L) = R(L,K)).
 |-------|---------|
 | `/` | Homepage with health badge, nav cards, live event feed |
 | `/leaderboards` | Browse by (K,L) pairs, drill into n values |
-| `/leaderboards/[k]/[l]/[n]` | Ranked table with score columns, top graph viz, auto-refresh via WebSocket |
+| `/leaderboards/[k]/[l]/[n]` | Ranked table with score columns, top graph viz, auto-refresh via polling |
 | `/submissions/[cid]` | Submission detail: verdict, witness, graph viz, rank |
 | `/submit` | Standalone graph submission form |
 
@@ -93,8 +92,6 @@ Port 3001, prefix `/api/`. SQLite at `./ramseynet.db`.
 | `/api/submissions/{cid}` | GET | Submission detail: graph, receipt, rank |
 | `/api/verify` | POST | Stateless graph verification |
 | `/api/submit` | POST | Full lifecycle: verify + store + leaderboard admit |
-| `/api/events` | WS | OESP-1 event stream |
-
 ### Submit Request/Response
 
 ```json
@@ -104,16 +101,10 @@ Port 3001, prefix `/api/`. SQLite at `./ramseynet.db`.
 { "graph_cid": "...", "verdict": "accepted", "admitted": true, "rank": 1, "score": {...} }
 ```
 
-### Event types
-- `graph.submitted` — new graph stored
-- `graph.verified` — verification result
-- `leaderboard.admitted` — graph admitted to leaderboard with rank
-
 ## Key Specs
 
 - **RGXF**: Packed upper-triangular adjacency bitstring, SHA-256 content addressed
 - **OVWC-1**: Verifier contract — JSON stdin/stdout, exit 0
-- **OESP-1**: WebSocket event stream with monotonic sequence numbers
 
 ## Test Data
 

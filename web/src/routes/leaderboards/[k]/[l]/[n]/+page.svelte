@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onDestroy } from 'svelte';
-	import { getLeaderboard, getLeaderboardGraphs, type LeaderboardDetail, type EventMessage, type RgxfJson } from '$lib/api';
-	import { subscribe } from '$lib/stores/events.svelte';
+	import { getLeaderboard, getLeaderboardGraphs, type LeaderboardDetail, type RgxfJson } from '$lib/api';
 	import MatrixView from '$lib/components/MatrixView.svelte';
 	import CircleLayout from '$lib/components/CircleLayout.svelte';
 	import GraphThumb from '$lib/components/GraphThumb.svelte';
@@ -124,24 +123,17 @@
 		refresh(k, l, n);
 	});
 
-	// Subscribe to shared WebSocket for live updates
+	// Poll for leaderboard updates every 10 seconds
 	$effect(() => {
 		const k = Number(page.params.k);
 		const l = Number(page.params.l);
 		const n = Number(page.params.n);
 
-		const unsub = subscribe((msg: EventMessage) => {
-			if (msg.event_type === 'leaderboard.admitted') {
-				const payload = typeof msg.payload === 'string'
-					? JSON.parse(msg.payload)
-					: msg.payload;
-				if (payload.k === k && payload.ell === l && payload.n === n) {
-					refresh(k, l, n);
-				}
-			}
-		});
+		const interval = setInterval(() => {
+			refresh(k, l, n);
+		}, 10_000);
 
-		return unsub;
+		return () => clearInterval(interval);
 	});
 </script>
 
