@@ -8,6 +8,7 @@ pub mod server;
 
 use std::collections::HashMap;
 use std::mem;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -240,6 +241,20 @@ pub trait SearchObserver: Send + Sync {
         _iteration: u64,
     ) {
     }
+
+    /// Get a snapshot of known canonical CIDs from prior rounds/submissions.
+    /// Search strategies can use this to pre-seed deduplication sets.
+    /// Default returns empty (no prior knowledge).
+    fn known_cids(&self) -> std::collections::HashSet<GraphCid> {
+        std::collections::HashSet::new()
+    }
+
+    /// Check if the search has been cancelled (e.g. Ctrl+C shutdown).
+    /// Strategies should check this periodically (every ~100 iterations)
+    /// and return their best result early when true.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
 
 /// No-op observer — zero overhead when viz is disabled.
@@ -257,12 +272,71 @@ pub struct Discovery {
     pub cid: GraphCid,
 }
 
+/// Thread-safe set of canonical CIDs that have already been seen — either
+/// from the server leaderboard, prior submissions, or earlier search rounds.
+/// Shared across the worker lifetime so discoveries are never re-submitted.
+#[derive(Clone, Default)]
+pub struct KnownCids {
+    inner: Arc<Mutex<std::collections::HashSet<GraphCid>>>,
+}
+
+impl KnownCids {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add CIDs from the server leaderboard (hex strings → GraphCid).
+    pub fn add_from_hex(&self, hex_cids: &[String]) {
+        let mut set = self.inner.lock().unwrap();
+        for hex in hex_cids {
+            if let Ok(cid) = GraphCid::from_hex(hex) {
+                set.insert(cid);
+            }
+        }
+    }
+
+    /// Add a single CID (after submission or discovery).
+    pub fn insert(&self, cid: GraphCid) {
+        self.inner.lock().unwrap().insert(cid);
+    }
+
+    /// Add a single CID from hex string.
+    pub fn insert_hex(&self, hex: &str) {
+        if let Ok(cid) = GraphCid::from_hex(hex) {
+            self.inner.lock().unwrap().insert(cid);
+        }
+    }
+
+    /// Check if a CID is already known.
+    pub fn contains(&self, cid: &GraphCid) -> bool {
+        self.inner.lock().unwrap().contains(cid)
+    }
+
+    /// Clone the set of known CIDs (for seeding a tree search `seen` set).
+    pub fn snapshot(&self) -> std::collections::HashSet<GraphCid> {
+        self.inner.lock().unwrap().clone()
+    }
+
+    /// Number of known CIDs.
+    pub fn len(&self) -> usize {
+        self.inner.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// Thread-safe collector that keeps only the best `capacity` discoveries,
 /// sorted by score (best first) with CID dedup. Acts as a mini-leaderboard
 /// so the worker only submits competitive graphs to the server.
+///
+/// Optionally references a `KnownCids` set to skip graphs that have
+/// already been submitted or seen in prior rounds.
 #[derive(Clone)]
 pub struct DiscoveryCollector {
     inner: Arc<Mutex<CollectorInner>>,
+    known: Option<KnownCids>,
 }
 
 struct CollectorInner {
@@ -289,15 +363,36 @@ impl DiscoveryCollector {
                 cid_set: std::collections::HashSet::new(),
                 capacity,
             })),
+            known: None,
+        }
+    }
+
+    /// Create a collector that cross-references a shared `KnownCids` set.
+    /// Graphs already in `known` are silently rejected on push.
+    pub fn with_known(capacity: usize, known: KnownCids) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(CollectorInner {
+                entries: Vec::new(),
+                cid_set: std::collections::HashSet::new(),
+                capacity,
+            })),
+            known: Some(known),
         }
     }
 
     /// Insert a discovery, maintaining sorted order and bounded capacity.
-    /// Duplicates (by CID) are silently ignored.
+    /// Duplicates (by CID, including cross-round known CIDs) are silently ignored.
     pub fn push(&self, discovery: Discovery) {
+        // Check global known CIDs first (lock-free relative to inner)
+        if let Some(ref known) = self.known {
+            if known.contains(&discovery.cid) {
+                return;
+            }
+        }
+
         let mut inner = self.inner.lock().unwrap();
 
-        // CID dedup
+        // Local CID dedup within this collector
         if inner.cid_set.contains(&discovery.cid) {
             return;
         }
@@ -311,6 +406,11 @@ impl DiscoveryCollector {
         // Reject if full and this would go past capacity
         if pos >= inner.capacity && inner.entries.len() >= inner.capacity {
             return;
+        }
+
+        // Mark as known globally so other collectors/future rounds skip it
+        if let Some(ref known) = self.known {
+            known.insert(discovery.cid.clone());
         }
 
         inner.cid_set.insert(discovery.cid.clone());
@@ -337,11 +437,46 @@ impl DiscoveryCollector {
 pub struct CollectorObserver {
     pub collector: DiscoveryCollector,
     viz: Option<VizObserver>,
+    /// Known CIDs for seeding tree search `seen` sets.
+    known: Option<KnownCids>,
+    /// Cancellation flag — set by the worker on Ctrl+C / shutdown.
+    cancelled: Arc<AtomicBool>,
 }
 
 impl CollectorObserver {
     pub fn new(collector: DiscoveryCollector, viz: Option<VizObserver>) -> Self {
-        Self { collector, viz }
+        let known = collector.known.clone();
+        Self {
+            collector,
+            viz,
+            known,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Create with a shared cancellation flag (so the worker can set it).
+    pub fn with_cancel(
+        collector: DiscoveryCollector,
+        viz: Option<VizObserver>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Self {
+        let known = collector.known.clone();
+        Self { collector, viz, known, cancelled }
+    }
+
+    /// Signal cancellation — search strategies will bail out early.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    /// Get a snapshot of all known canonical CIDs for seeding a search's
+    /// dedup set. Tree search uses this to pre-populate its `seen` HashSet
+    /// so it never wastes iterations on graphs already discovered.
+    pub fn known_cid_snapshot(&self) -> std::collections::HashSet<GraphCid> {
+        match &self.known {
+            Some(known) => known.snapshot(),
+            None => std::collections::HashSet::new(),
+        }
     }
 }
 
@@ -350,6 +485,14 @@ impl SearchObserver for CollectorObserver {
         if let Some(ref viz) = self.viz {
             viz.on_progress(info);
         }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+
+    fn known_cids(&self) -> std::collections::HashSet<GraphCid> {
+        self.known_cid_snapshot()
     }
 
     fn on_valid_found(

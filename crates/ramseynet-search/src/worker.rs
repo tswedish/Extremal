@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -12,7 +12,9 @@ use tracing::{error, info, warn};
 use crate::client::ServerClient;
 use crate::error::SearchError;
 use crate::search::Searcher;
-use crate::viz::{CollectorObserver, Discovery, DiscoveryCollector, VizHandle, VizObserver};
+use crate::viz::{
+    CollectorObserver, Discovery, DiscoveryCollector, KnownCids, VizHandle, VizObserver,
+};
 
 /// Configuration for the worker loop.
 pub struct WorkerConfig {
@@ -27,47 +29,16 @@ pub struct WorkerConfig {
     pub leaderboard_pool: Option<Arc<Mutex<Vec<AdjacencyMatrix>>>>,
 }
 
-// ── Local leaderboard cache ─────────────────────────────────────────
-
-/// Tracks known canonical CIDs on the server leaderboard so we can skip
-/// re-submitting graphs the server already has.
-struct LeaderboardCache {
-    known_cids: HashSet<String>,
-}
-
-impl LeaderboardCache {
-    fn new() -> Self {
-        Self {
-            known_cids: HashSet::new(),
-        }
-    }
-
-    /// Refresh from server leaderboard entries.
-    fn refresh(&mut self, cids: Vec<String>) {
-        self.known_cids = cids.into_iter().collect();
-        info!(known = self.known_cids.len(), "refreshed leaderboard cache");
-    }
-
-    /// Check if a CID is already known on the leaderboard.
-    fn contains(&self, cid: &str) -> bool {
-        self.known_cids.contains(cid)
-    }
-
-    /// Mark a CID as known (after successful submission).
-    fn insert(&mut self, cid: String) {
-        self.known_cids.insert(cid);
-    }
-}
-
 // ── Periodic submission ─────────────────────────────────────────────
 
 /// Drain the collector and submit discoveries to the server, skipping
-/// any that are already in the local cache.
+/// any whose canonical CID is already known (from prior rounds, server
+/// leaderboard, or earlier submissions in this batch).
 #[allow(clippy::too_many_arguments)]
 async fn submit_discoveries(
     client: &ServerClient,
     collector: &DiscoveryCollector,
-    cache: &mut LeaderboardCache,
+    known: &KnownCids,
     k: u32,
     ell: u32,
     n: u32,
@@ -85,8 +56,8 @@ async fn submit_discoveries(
     for discovery in &discoveries {
         let cid_hex = discovery.cid.to_hex();
 
-        // Skip if already on leaderboard
-        if cache.contains(&cid_hex) {
+        // Skip if already known (leaderboard, prior submission, or prior discovery)
+        if known.contains(&discovery.cid) {
             continue;
         }
 
@@ -101,8 +72,8 @@ async fn submit_discoveries(
                     rank = ?resp.rank,
                     "submitted graph"
                 );
-                // Update cache with the canonical CID returned by server
-                cache.insert(resp.graph_cid.clone());
+                // Mark as known so we never re-submit
+                known.insert_hex(&resp.graph_cid);
                 submitted += 1;
 
                 if was_admitted {
@@ -145,7 +116,11 @@ pub async fn run_worker(
     let k = config.k;
     let ell = config.ell;
     let target_n = config.n;
-    let mut cache = LeaderboardCache::new();
+
+    // Persistent known-CID set: survives across rounds, strategies, and
+    // periodic submission batches. Prevents re-submitting any graph that
+    // has been seen before (on the leaderboard, submitted, or discovered).
+    let known = KnownCids::new();
 
     loop {
         // Check shutdown
@@ -154,7 +129,7 @@ pub async fn run_worker(
             return Ok(());
         }
 
-        // Fetch threshold + leaderboard CIDs to populate local cache
+        // Fetch threshold
         match client.get_threshold(k, ell, target_n).await {
             Ok(info) => {
                 info!(
@@ -169,10 +144,11 @@ pub async fn run_worker(
             }
         }
 
-        // Refresh local cache of known CIDs
+        // Refresh known CIDs from server leaderboard
         match client.get_leaderboard_cids(k, ell, target_n).await {
             Ok(cids) => {
-                cache.refresh(cids);
+                known.add_from_hex(&cids);
+                info!(known = known.len(), "refreshed known CIDs from server");
             }
             Err(e) => {
                 warn!("failed to fetch leaderboard CIDs: {e}");
@@ -213,9 +189,8 @@ pub async fn run_worker(
 
             info!(strategy, target_n, max_iters, "running search");
 
-            // Use a shared collector that persists across the search.
-            // A concurrent task drains it periodically for submission.
-            let collector = DiscoveryCollector::new();
+            // Collector with cross-round dedup via known CIDs
+            let collector = DiscoveryCollector::with_known(100, known.clone());
             let collector_for_search = collector.clone();
             let collector_for_submit = collector.clone();
             let n = target_n;
@@ -223,10 +198,17 @@ pub async fn run_worker(
             let mut search_rng = SmallRng::from_rng(&mut rng).unwrap();
             let viz = viz_handle.clone();
 
+            // Shared cancellation flag — set on Ctrl+C so the search
+            // bails out within ~100 iterations instead of running to max_iters.
+            let cancel_flag = Arc::new(AtomicBool::new(false));
+            let cancel_for_search = cancel_flag.clone();
+
             // Spawn the search in a blocking thread
             let mut search_handle = tokio::task::spawn_blocking(move || {
                 let viz_obs = viz.map(VizObserver::new);
-                let obs = CollectorObserver::new(collector_for_search, viz_obs);
+                let obs = CollectorObserver::with_cancel(
+                    collector_for_search, viz_obs, cancel_for_search,
+                );
                 searcher.search(n, k, ell, max_iters, &mut search_rng, &obs)
             });
 
@@ -234,15 +216,25 @@ pub async fn run_worker(
             let submit_interval = Duration::from_secs(30);
             let strategy_name = strategy.to_string();
             let mut last_submit = Instant::now();
+            let mut shutting_down = false;
 
             loop {
                 tokio::select! {
                     result = &mut search_handle => {
-                        // Search completed — handle final result
+                        // Search completed (normally or via cancellation)
                         let result = result.unwrap();
                         let elapsed = start.elapsed();
 
-                        // If final result is valid, add it to the collector too
+                        if shutting_down {
+                            info!(
+                                strategy,
+                                iterations = result.iterations,
+                                elapsed_ms = elapsed.as_millis() as u64,
+                                "search interrupted by shutdown"
+                            );
+                        }
+
+                        // If final result is valid, add it to the collector
                         if result.valid {
                             let score_result = compute_score_canonical(&result.graph);
                             let canonical_cid = compute_cid(&score_result.canonical_graph);
@@ -272,7 +264,7 @@ pub async fn run_worker(
                                         "found valid graph!"
                                     );
                                 }
-                            } else {
+                            } else if !shutting_down {
                                 info!(
                                     strategy,
                                     target_n,
@@ -282,7 +274,7 @@ pub async fn run_worker(
                                     "found valid graph!"
                                 );
                             }
-                        } else {
+                        } else if !shutting_down {
                             warn!(
                                 strategy,
                                 target_n,
@@ -292,9 +284,9 @@ pub async fn run_worker(
                             );
                         }
 
-                        // Final drain + submit
+                        // Final drain + submit any remaining discoveries
                         let (sub, adm) = submit_discoveries(
-                            &client, &collector_for_submit, &mut cache,
+                            &client, &collector_for_submit, &known,
                             k, ell, target_n, &viz_handle, &strategy_name,
                         ).await;
                         if sub > 0 {
@@ -302,12 +294,32 @@ pub async fn run_worker(
                             found = true;
                         }
 
+                        if shutting_down {
+                            info!("shutdown complete — submitted remaining discoveries");
+                            return Ok(());
+                        }
+
                         break; // Move to next strategy
                     }
+                    _ = shutdown.changed(), if !shutting_down => {
+                        // Ctrl+C received — signal the search to stop ASAP
+                        info!("shutdown signal received, cancelling search...");
+                        cancel_flag.store(true, Ordering::Relaxed);
+                        shutting_down = true;
+                        // Don't break — wait for the search to finish (should be fast)
+                        // The next iteration will pick up the search_handle completing.
+                    }
                     _ = tokio::time::sleep(submit_interval.saturating_sub(last_submit.elapsed())) => {
+                        // Check shutdown between periodic submissions
+                        if *shutdown.borrow() && !shutting_down {
+                            info!("shutdown signal received, cancelling search...");
+                            cancel_flag.store(true, Ordering::Relaxed);
+                            shutting_down = true;
+                        }
+
                         // Periodic drain + submit while search is still running
                         let (sub, adm) = submit_discoveries(
-                            &client, &collector_for_submit, &mut cache,
+                            &client, &collector_for_submit, &known,
                             k, ell, target_n, &viz_handle, &strategy_name,
                         ).await;
                         if sub > 0 {
@@ -367,6 +379,10 @@ async fn run_worker_offline(
     let mut rng = SmallRng::from_entropy();
     let mut round = 0u64;
 
+    // Even in offline mode, keep a known-CID set so we don't re-discover
+    // the same isomorphism classes across rounds.
+    let known = KnownCids::new();
+
     loop {
         if *shutdown.borrow() {
             info!("shutdown signal received, exiting");
@@ -389,7 +405,7 @@ async fn run_worker_offline(
             let searcher = Arc::clone(searcher);
             let mut search_rng = SmallRng::from_rng(&mut rng).unwrap();
             let viz = viz_handle.clone();
-            let collector = DiscoveryCollector::new();
+            let collector = DiscoveryCollector::with_known(100, known.clone());
             let collector_for_search = collector.clone();
             let (result, score) = tokio::task::spawn_blocking(move || {
                 let viz_obs = viz.map(VizObserver::new);

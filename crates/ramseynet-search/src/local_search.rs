@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
-use rand::rngs::SmallRng;
-use rand::Rng;
 use ramseynet_graph::{compute_cid, AdjacencyMatrix};
 use ramseynet_types::Verdict;
 use ramseynet_verifier::clique::{count_cliques, find_clique_witness};
 use ramseynet_verifier::verify_ramsey;
+use rand::rngs::SmallRng;
+use rand::Rng;
 
 use crate::init::{init_graph, InitStrategy};
 use crate::search::{SearchResult, Searcher};
@@ -58,14 +58,26 @@ impl Searcher for LocalSearcher {
         let mut iters_since_improvement = 0u64;
 
         for iter in 0..max_iters {
+            if iter % 100 == 0 && observer.is_cancelled() {
+                break;
+            }
+
             // Periodically compute full violation score for stagnation detection
             if iter % FULL_SCORE_INTERVAL == 0 {
                 let score = violation_count(&graph, &complement, k, ell);
                 if score == 0 {
                     observer.on_progress(&ProgressInfo {
-                        graph: &graph, n, k, ell, strategy: "local",
-                        iteration: iter + 1, max_iters, valid: true,
-                        violation_score: 0, k_cliques: None, ell_indsets: None,
+                        graph: &graph,
+                        n,
+                        k,
+                        ell,
+                        strategy: "local",
+                        iteration: iter + 1,
+                        max_iters,
+                        valid: true,
+                        violation_score: 0,
+                        k_cliques: None,
+                        ell_indsets: None,
                     });
                     return SearchResult {
                         graph,
@@ -79,9 +91,17 @@ impl Searcher for LocalSearcher {
                 }
 
                 observer.on_progress(&ProgressInfo {
-                    graph: &graph, n, k, ell, strategy: "local",
-                    iteration: iter, max_iters, valid: false,
-                    violation_score: score as u32, k_cliques: None, ell_indsets: None,
+                    graph: &graph,
+                    n,
+                    k,
+                    ell,
+                    strategy: "local",
+                    iteration: iter,
+                    max_iters,
+                    valid: false,
+                    violation_score: score as u32,
+                    k_cliques: None,
+                    ell_indsets: None,
                 });
             }
 
@@ -108,9 +128,17 @@ impl Searcher for LocalSearcher {
             } else {
                 // No violations found — graph is valid!
                 observer.on_progress(&ProgressInfo {
-                    graph: &graph, n, k, ell, strategy: "local",
-                    iteration: iter + 1, max_iters, valid: true,
-                    violation_score: 0, k_cliques: None, ell_indsets: None,
+                    graph: &graph,
+                    n,
+                    k,
+                    ell,
+                    strategy: "local",
+                    iteration: iter + 1,
+                    max_iters,
+                    valid: true,
+                    violation_score: 0,
+                    k_cliques: None,
+                    ell_indsets: None,
                 });
                 return SearchResult {
                     graph,
@@ -175,7 +203,11 @@ fn witness_directed_flip(
             if tabu.contains(&(lo, hi)) {
                 continue;
             }
-            let dominated = if is_clique { graph.edge(v, w) } else { !graph.edge(v, w) };
+            let dominated = if is_clique {
+                graph.edge(v, w)
+            } else {
+                !graph.edge(v, w)
+            };
             if dominated {
                 candidates.push((lo, hi));
             }
@@ -236,7 +268,10 @@ mod tests {
         let searcher = LocalSearcher::default();
         let mut rng = SmallRng::seed_from_u64(123);
         let result = searcher.search(5, 3, 3, 10_000, &mut rng, &NoOpObserver);
-        assert!(result.valid, "local search should find a valid R(3,3) graph on 5 vertices");
+        assert!(
+            result.valid,
+            "local search should find a valid R(3,3) graph on 5 vertices"
+        );
         assert_eq!(result.graph.n(), 5);
     }
 

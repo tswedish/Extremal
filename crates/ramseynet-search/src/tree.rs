@@ -91,7 +91,9 @@ impl Searcher for TreeSearcher {
         let seed_cid = compute_cid(&seed);
         let (seed_score, seed_kc, seed_ei) = beam_score_detail(&seed, k, ell);
 
-        let mut seen: HashSet<GraphCid> = HashSet::new();
+        // Pre-seed with known canonical CIDs from prior rounds/submissions
+        // so we never waste iterations evaluating graphs we've already found.
+        let mut seen: HashSet<GraphCid> = observer.known_cids();
         seen.insert(seed_cid);
 
         let mut best_valid: Option<AdjacencyMatrix> = None;
@@ -122,7 +124,7 @@ impl Searcher for TreeSearcher {
         let mut beam: Vec<(AdjacencyMatrix, u64)> = vec![(seed, seed_score)];
 
         for _depth in 0..self.max_depth {
-            if iters_used >= max_iters || beam.is_empty() {
+            if iters_used >= max_iters || beam.is_empty() || observer.is_cancelled() {
                 break;
             }
 
@@ -141,7 +143,7 @@ impl Searcher for TreeSearcher {
             let mut candidates: Vec<(AdjacencyMatrix, u64)> = Vec::new();
 
             for (parent, _parent_score) in &beam {
-                if iters_used >= max_iters {
+                if iters_used >= max_iters || observer.is_cancelled() {
                     break;
                 }
 
@@ -155,7 +157,7 @@ impl Searcher for TreeSearcher {
                 };
 
                 for &(i, j) in &edges_to_try {
-                    if iters_used >= max_iters {
+                    if iters_used >= max_iters || observer.is_cancelled() {
                         break;
                     }
 

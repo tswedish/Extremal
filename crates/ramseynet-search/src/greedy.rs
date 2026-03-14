@@ -1,8 +1,8 @@
+use ramseynet_graph::{compute_cid, AdjacencyMatrix};
+use ramseynet_verifier::verify_ramsey;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use ramseynet_graph::{compute_cid, AdjacencyMatrix};
-use ramseynet_verifier::verify_ramsey;
 
 use crate::search::{SearchResult, Searcher};
 use crate::viz::{ProgressInfo, SearchObserver};
@@ -26,13 +26,25 @@ impl Searcher for GreedySearcher {
         let mut total_iters = 0u64;
 
         for _ in 0..max_iters {
+            if observer.is_cancelled() {
+                break;
+            }
+
             let result = greedy_once(n, k, ell, rng);
             total_iters += 1;
 
             observer.on_progress(&ProgressInfo {
-                graph: &result.graph, n, k, ell, strategy: "greedy",
-                iteration: total_iters, max_iters, valid: result.valid,
-                violation_score: 0, k_cliques: None, ell_indsets: None,
+                graph: &result.graph,
+                n,
+                k,
+                ell,
+                strategy: "greedy",
+                iteration: total_iters,
+                max_iters,
+                valid: result.valid,
+                violation_score: 0,
+                k_cliques: None,
+                ell_indsets: None,
             });
 
             if result.valid {
@@ -117,7 +129,10 @@ mod tests {
         let searcher = GreedySearcher;
         let mut rng = SmallRng::seed_from_u64(42);
         let result = searcher.search(5, 3, 3, 100, &mut rng, &NoOpObserver);
-        assert!(result.valid, "greedy should find a valid R(3,3) graph on 5 vertices");
+        assert!(
+            result.valid,
+            "greedy should find a valid R(3,3) graph on 5 vertices"
+        );
         assert_eq!(result.graph.n(), 5);
     }
 

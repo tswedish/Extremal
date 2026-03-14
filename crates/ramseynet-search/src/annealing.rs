@@ -1,8 +1,8 @@
-use rand::rngs::SmallRng;
-use rand::Rng;
 use ramseynet_graph::{compute_cid, AdjacencyMatrix};
 use ramseynet_types::Verdict;
 use ramseynet_verifier::verify_ramsey;
+use rand::rngs::SmallRng;
+use rand::Rng;
 
 use crate::init::{init_graph, InitStrategy};
 use crate::search::{SearchResult, Searcher};
@@ -117,11 +117,21 @@ impl Searcher for AnnealingSearcher {
 
         for iter in 0..max_iters {
             if iter % 100 == 0 {
+                if observer.is_cancelled() {
+                    break;
+                }
                 observer.on_progress(&ProgressInfo {
-                    graph: &graph, n, k, ell, strategy: "annealing",
-                    iteration: iter, max_iters, valid: false,
+                    graph: &graph,
+                    n,
+                    k,
+                    ell,
+                    strategy: "annealing",
+                    iteration: iter,
+                    max_iters,
+                    valid: false,
                     violation_score: current_score,
-                    k_cliques: None, ell_indsets: None,
+                    k_cliques: None,
+                    ell_indsets: None,
                 });
             }
 
@@ -131,9 +141,17 @@ impl Searcher for AnnealingSearcher {
                 current_score = violation_score(&graph, k, ell);
                 if current_score == 0 {
                     observer.on_progress(&ProgressInfo {
-                        graph: &graph, n, k, ell, strategy: "annealing",
-                        iteration: iter + 1, max_iters, valid: true,
-                        violation_score: 0, k_cliques: None, ell_indsets: None,
+                        graph: &graph,
+                        n,
+                        k,
+                        ell,
+                        strategy: "annealing",
+                        iteration: iter + 1,
+                        max_iters,
+                        valid: true,
+                        violation_score: 0,
+                        k_cliques: None,
+                        ell_indsets: None,
                     });
                     return SearchResult {
                         graph,
@@ -160,9 +178,17 @@ impl Searcher for AnnealingSearcher {
 
             if new_score == 0 {
                 observer.on_progress(&ProgressInfo {
-                    graph: &graph, n, k, ell, strategy: "annealing",
-                    iteration: iter + 1, max_iters, valid: true,
-                    violation_score: 0, k_cliques: None, ell_indsets: None,
+                    graph: &graph,
+                    n,
+                    k,
+                    ell,
+                    strategy: "annealing",
+                    iteration: iter + 1,
+                    max_iters,
+                    valid: true,
+                    violation_score: 0,
+                    k_cliques: None,
+                    ell_indsets: None,
                 });
                 return SearchResult {
                     graph,
@@ -214,7 +240,10 @@ mod tests {
         let searcher = AnnealingSearcher::default();
         let mut rng = SmallRng::seed_from_u64(99);
         let result = searcher.search(5, 3, 3, 50_000, &mut rng, &NoOpObserver);
-        assert!(result.valid, "annealing should find a valid R(3,3) graph on 5 vertices");
+        assert!(
+            result.valid,
+            "annealing should find a valid R(3,3) graph on 5 vertices"
+        );
         assert_eq!(result.graph.n(), 5);
     }
 
