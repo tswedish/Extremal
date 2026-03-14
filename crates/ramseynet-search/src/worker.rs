@@ -1,17 +1,18 @@
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use ramseynet_graph::{compute_cid, rgxf, AdjacencyMatrix};
-use ramseynet_verifier::scoring::compute_score;
+use ramseynet_verifier::scoring::compute_score_canonical;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 
 use crate::client::ServerClient;
 use crate::error::SearchError;
 use crate::search::Searcher;
-use crate::viz::{CollectorObserver, DiscoveryCollector, VizHandle, VizObserver};
+use crate::viz::{CollectorObserver, Discovery, DiscoveryCollector, VizHandle, VizObserver};
 
 /// Configuration for the worker loop.
 pub struct WorkerConfig {
@@ -25,6 +26,106 @@ pub struct WorkerConfig {
     /// worker refreshes this pool from the server each round.
     pub leaderboard_pool: Option<Arc<Mutex<Vec<AdjacencyMatrix>>>>,
 }
+
+// ── Local leaderboard cache ─────────────────────────────────────────
+
+/// Tracks known canonical CIDs on the server leaderboard so we can skip
+/// re-submitting graphs the server already has.
+struct LeaderboardCache {
+    known_cids: HashSet<String>,
+}
+
+impl LeaderboardCache {
+    fn new() -> Self {
+        Self {
+            known_cids: HashSet::new(),
+        }
+    }
+
+    /// Refresh from server leaderboard entries.
+    fn refresh(&mut self, cids: Vec<String>) {
+        self.known_cids = cids.into_iter().collect();
+        info!(known = self.known_cids.len(), "refreshed leaderboard cache");
+    }
+
+    /// Check if a CID is already known on the leaderboard.
+    fn contains(&self, cid: &str) -> bool {
+        self.known_cids.contains(cid)
+    }
+
+    /// Mark a CID as known (after successful submission).
+    fn insert(&mut self, cid: String) {
+        self.known_cids.insert(cid);
+    }
+}
+
+// ── Periodic submission ─────────────────────────────────────────────
+
+/// Drain the collector and submit discoveries to the server, skipping
+/// any that are already in the local cache.
+#[allow(clippy::too_many_arguments)]
+async fn submit_discoveries(
+    client: &ServerClient,
+    collector: &DiscoveryCollector,
+    cache: &mut LeaderboardCache,
+    k: u32,
+    ell: u32,
+    n: u32,
+    viz_handle: &Option<Arc<VizHandle>>,
+    strategy: &str,
+) -> (usize, usize) {
+    let discoveries = collector.drain();
+    if discoveries.is_empty() {
+        return (0, 0);
+    }
+
+    let mut submitted = 0usize;
+    let mut admitted = 0usize;
+
+    for discovery in &discoveries {
+        let cid_hex = discovery.cid.to_hex();
+
+        // Skip if already on leaderboard
+        if cache.contains(&cid_hex) {
+            continue;
+        }
+
+        let rgxf_json = rgxf::to_json(&discovery.graph);
+        match client.submit(k, ell, n, rgxf_json).await {
+            Ok(resp) => {
+                let was_admitted = resp.admitted.unwrap_or(false);
+                info!(
+                    graph_cid = %resp.graph_cid,
+                    verdict = %resp.verdict,
+                    admitted = was_admitted,
+                    rank = ?resp.rank,
+                    "submitted graph"
+                );
+                // Update cache with the canonical CID returned by server
+                cache.insert(resp.graph_cid.clone());
+                submitted += 1;
+
+                if was_admitted {
+                    admitted += 1;
+                    info!("admitted to leaderboard! rank={}", resp.rank.unwrap_or(0));
+                    if let Some(ref vh) = viz_handle {
+                        vh.submit_discovery(
+                            &discovery.graph, n, strategy, 0,
+                            true, discovery.score.clone(),
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                error!(graph_cid = %cid_hex, "submit failed: {e}");
+            }
+        }
+    }
+
+    (submitted, admitted)
+}
+
+// ── Main worker loop ────────────────────────────────────────────────
 
 /// Run the search worker loop.
 pub async fn run_worker(
@@ -44,6 +145,7 @@ pub async fn run_worker(
     let k = config.k;
     let ell = config.ell;
     let target_n = config.n;
+    let mut cache = LeaderboardCache::new();
 
     loop {
         // Check shutdown
@@ -52,7 +154,7 @@ pub async fn run_worker(
             return Ok(());
         }
 
-        // Fetch threshold
+        // Fetch threshold + leaderboard CIDs to populate local cache
         match client.get_threshold(k, ell, target_n).await {
             Ok(info) => {
                 info!(
@@ -64,6 +166,16 @@ pub async fn run_worker(
             }
             Err(e) => {
                 warn!("failed to fetch threshold: {e}");
+            }
+        }
+
+        // Refresh local cache of known CIDs
+        match client.get_leaderboard_cids(k, ell, target_n).await {
+            Ok(cids) => {
+                cache.refresh(cids);
+            }
+            Err(e) => {
+                warn!("failed to fetch leaderboard CIDs: {e}");
             }
         }
 
@@ -101,119 +213,109 @@ pub async fn run_worker(
 
             info!(strategy, target_n, max_iters, "running search");
 
-            // Run search in blocking thread with discovery collector
+            // Use a shared collector that persists across the search.
+            // A concurrent task drains it periodically for submission.
+            let collector = DiscoveryCollector::new();
+            let collector_for_search = collector.clone();
+            let collector_for_submit = collector.clone();
             let n = target_n;
             let searcher = Arc::clone(searcher);
             let mut search_rng = SmallRng::from_rng(&mut rng).unwrap();
             let viz = viz_handle.clone();
-            let collector = DiscoveryCollector::new();
-            let collector_for_search = collector.clone();
-            let (result, score) = tokio::task::spawn_blocking(move || {
+
+            // Spawn the search in a blocking thread
+            let mut search_handle = tokio::task::spawn_blocking(move || {
                 let viz_obs = viz.map(VizObserver::new);
                 let obs = CollectorObserver::new(collector_for_search, viz_obs);
-                let result = searcher.search(n, k, ell, max_iters, &mut search_rng, &obs);
-                let score = if result.valid {
-                    Some(compute_score(&result.graph, &compute_cid(&result.graph)))
-                } else {
-                    None
-                };
-                (result, score)
-            })
-            .await
-            .unwrap();
+                searcher.search(n, k, ell, max_iters, &mut search_rng, &obs)
+            });
 
-            let elapsed = start.elapsed();
+            // While search is running, periodically drain and submit discoveries
+            let submit_interval = Duration::from_secs(30);
+            let strategy_name = strategy.to_string();
+            let mut last_submit = Instant::now();
 
-            // Add the final result to collector (dedup + bounded insert handled internally)
-            if let Some(ref score) = score {
-                let final_cid = compute_cid(&result.graph);
-                collector.push(crate::viz::Discovery {
-                    graph: result.graph.clone(),
-                    score: score.clone(),
-                    cid: final_cid,
-                });
-            }
+            loop {
+                tokio::select! {
+                    result = &mut search_handle => {
+                        // Search completed — handle final result
+                        let result = result.unwrap();
+                        let elapsed = start.elapsed();
 
-            // Drain best discoveries (already sorted, bounded to 100, CID-deduped)
-            let discoveries = collector.drain();
+                        // If final result is valid, add it to the collector too
+                        if result.valid {
+                            let score_result = compute_score_canonical(&result.graph);
+                            let canonical_cid = compute_cid(&score_result.canonical_graph);
+                            collector_for_submit.push(Discovery {
+                                graph: score_result.canonical_graph.clone(),
+                                score: score_result.score.clone(),
+                                cid: canonical_cid,
+                            });
 
-            if let Some(score) = score {
-                // Submit final result to viz leaderboard
-                if let Some(ref vh) = viz_handle {
-                    if let Some(entry) = vh.submit_discovery(
-                        &result.graph, target_n, strategy, result.iterations,
-                        false, score,
-                    ) {
-                        info!(
-                            strategy,
-                            target_n,
-                            iterations = result.iterations,
-                            edges = result.graph.num_edges(),
-                            elapsed_ms = elapsed.as_millis() as u64,
-                            omega = entry.score.omega,
-                            alpha = entry.score.alpha,
-                            c_omega = entry.score.c_omega,
-                            c_alpha = entry.score.c_alpha,
-                            aut_order = entry.score.aut_order,
-                            rank = entry.rank,
-                            "found valid graph!"
-                        );
-                    }
-                } else {
-                    info!(
-                        strategy,
-                        target_n,
-                        iterations = result.iterations,
-                        edges = result.graph.num_edges(),
-                        elapsed_ms = elapsed.as_millis() as u64,
-                        "found valid graph!"
-                    );
-                }
-            } else if discoveries.is_empty() {
-                warn!(
-                    strategy,
-                    target_n,
-                    iterations = result.iterations,
-                    elapsed_ms = elapsed.as_millis() as u64,
-                    "no valid graph found"
-                );
-            }
-
-            // Submit all discoveries to server
-            if !discoveries.is_empty() {
-                info!(
-                    strategy,
-                    count = discoveries.len(),
-                    "submitting all discoveries to server"
-                );
-                for discovery in &discoveries {
-                    let rgxf_json = rgxf::to_json(&discovery.graph);
-                    match client.submit(k, ell, target_n, rgxf_json).await {
-                        Ok(resp) => {
-                            let admitted = resp.admitted.unwrap_or(false);
-                            info!(
-                                graph_cid = %resp.graph_cid,
-                                verdict = %resp.verdict,
-                                admitted,
-                                rank = ?resp.rank,
-                                "submitted graph"
-                            );
-                            if admitted {
-                                info!("admitted to leaderboard! rank={}", resp.rank.unwrap_or(0));
-                                if let Some(ref vh) = viz_handle {
-                                    vh.submit_discovery(
-                                        &discovery.graph, target_n, strategy, result.iterations,
-                                        true, discovery.score.clone(),
+                            if let Some(ref vh) = viz_handle {
+                                if let Some(entry) = vh.submit_discovery(
+                                    &result.graph, target_n, strategy, result.iterations,
+                                    false, score_result.score,
+                                ) {
+                                    info!(
+                                        strategy,
+                                        target_n,
+                                        iterations = result.iterations,
+                                        edges = result.graph.num_edges(),
+                                        elapsed_ms = elapsed.as_millis() as u64,
+                                        omega = entry.score.omega,
+                                        alpha = entry.score.alpha,
+                                        c_omega = entry.score.c_omega,
+                                        c_alpha = entry.score.c_alpha,
+                                        aut_order = entry.score.aut_order,
+                                        rank = entry.rank,
+                                        "found valid graph!"
                                     );
                                 }
+                            } else {
+                                info!(
+                                    strategy,
+                                    target_n,
+                                    iterations = result.iterations,
+                                    edges = result.graph.num_edges(),
+                                    elapsed_ms = elapsed.as_millis() as u64,
+                                    "found valid graph!"
+                                );
                             }
-                            consecutive_failures = 0;
+                        } else {
+                            warn!(
+                                strategy,
+                                target_n,
+                                iterations = result.iterations,
+                                elapsed_ms = elapsed.as_millis() as u64,
+                                "no valid graph found"
+                            );
+                        }
+
+                        // Final drain + submit
+                        let (sub, adm) = submit_discoveries(
+                            &client, &collector_for_submit, &mut cache,
+                            k, ell, target_n, &viz_handle, &strategy_name,
+                        ).await;
+                        if sub > 0 {
+                            info!(submitted = sub, admitted = adm, "final submission batch");
                             found = true;
                         }
-                        Err(e) => {
-                            error!(graph_cid = %discovery.cid.to_hex(), "submit failed: {e}");
-                            consecutive_failures += 1;
+
+                        break; // Move to next strategy
+                    }
+                    _ = tokio::time::sleep(submit_interval.saturating_sub(last_submit.elapsed())) => {
+                        // Periodic drain + submit while search is still running
+                        let (sub, adm) = submit_discoveries(
+                            &client, &collector_for_submit, &mut cache,
+                            k, ell, target_n, &viz_handle, &strategy_name,
+                        ).await;
+                        if sub > 0 {
+                            info!(submitted = sub, admitted = adm, "periodic submission batch");
+                            found = true;
+                            consecutive_failures = 0;
                         }
+                        last_submit = Instant::now();
                     }
                 }
             }
@@ -234,7 +336,7 @@ pub async fn run_worker(
                 );
 
                 tokio::select! {
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)) => {}
+                    _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
                     _ = shutdown.changed() => {
                         info!("shutdown signal received during backoff");
                         return Ok(());
@@ -294,7 +396,8 @@ async fn run_worker_offline(
                 let obs = CollectorObserver::new(collector_for_search, viz_obs);
                 let result = searcher.search(n, k, ell, max_iters, &mut search_rng, &obs);
                 let score = if result.valid {
-                    Some(compute_score(&result.graph, &compute_cid(&result.graph)))
+                    let sr = compute_score_canonical(&result.graph);
+                    Some(sr.score)
                 } else {
                     None
                 };

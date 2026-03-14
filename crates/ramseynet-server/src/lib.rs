@@ -9,8 +9,8 @@ use axum::{
 use ramseynet_graph::{compute_cid, rgxf, RgxfJson};
 use ramseynet_ledger::{AdmitScore, Ledger, LedgerError};
 use ramseynet_types::RamseyParams;
-use ramseynet_verifier::scoring::compute_score;
-use ramseynet_verifier::{verify_ramsey, VerifyRequest, VerifyResponse};
+use ramseynet_verifier::scoring::compute_score_canonical;
+use ramseynet_verifier::{canonical_form, verify_ramsey, VerifyRequest, VerifyResponse};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tower_http::cors::CorsLayer;
@@ -181,6 +181,7 @@ struct GraphsQuery {
 // ── Verify ──────────────────────────────────────────────────────────
 
 /// Stateless verification — no database interaction.
+/// Returns the canonical CID (isomorphism-class identity) when want_cid is true.
 async fn verify(
     Json(req): Json<VerifyRequest>,
 ) -> Result<Json<VerifyResponse>, ApiError> {
@@ -191,7 +192,9 @@ async fn verify(
         )
     })?;
 
-    let cid = compute_cid(&adj);
+    // Compute canonical form to get the isomorphism-invariant CID
+    let (canonical_adj, _aut_order) = canonical_form(&adj);
+    let cid = compute_cid(&canonical_adj);
     let result = verify_ramsey(&adj, req.k, req.ell, &cid);
 
     let mut response: VerifyResponse = result.into();
@@ -212,7 +215,11 @@ struct SubmitRequest {
     graph: RgxfJson,
 }
 
-/// Full lifecycle: verify + store + leaderboard admission + emit events.
+/// Full lifecycle: verify + canonicalize + store + leaderboard admission.
+///
+/// The submitted graph is canonicalized via nauty before storage.
+/// The canonical CID is the submission's identity — isomorphic graphs
+/// map to the same CID and are deduplicated automatically.
 async fn submit_graph(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SubmitRequest>,
@@ -237,16 +244,22 @@ async fn submit_graph(
         ));
     }
 
-    // 2. Compute CID and verify
-    let cid = compute_cid(&adj);
-    let cid_hex = cid.to_hex();
+    // 2. Compute canonical form and canonical CID
+    //    The canonical CID is isomorphism-invariant: two isomorphic graphs
+    //    produce the same CID and are treated as duplicates.
+    let (canonical_adj, _aut_order) = canonical_form(&adj);
+    let canonical_cid = compute_cid(&canonical_adj);
+    let cid_hex = canonical_cid.to_hex();
+
     info!(
         graph_cid = %cid_hex,
         k, ell, n,
         edges = adj.num_edges(),
-        "received submission"
+        "received submission (canonical CID)"
     );
-    let result = verify_ramsey(&adj, k, ell, &cid);
+
+    // 3. Verify the original graph (verification is label-independent)
+    let result = verify_ramsey(&adj, k, ell, &canonical_cid);
 
     info!(
         graph_cid = %cid_hex,
@@ -255,8 +268,9 @@ async fn submit_graph(
         "verified graph"
     );
 
-    // 3. Store submission (handle duplicates gracefully)
-    let rgxf_json_str = serde_json::to_string(&req.graph).unwrap();
+    // 4. Store submission using canonical RGXF and canonical CID
+    let canonical_rgxf = rgxf::to_json(&canonical_adj);
+    let rgxf_json_str = serde_json::to_string(&canonical_rgxf).unwrap();
     let ledger = state.ledger.clone();
     let cid_hex2 = cid_hex.clone();
     let is_duplicate = {
@@ -268,14 +282,14 @@ async fn submit_graph(
         match result {
             Ok(_) => false,
             Err(LedgerError::GraphAlreadySubmitted(_)) => {
-                info!(graph_cid = %cid_hex, "duplicate submission, skipping");
+                info!(graph_cid = %cid_hex, "duplicate submission (isomorphic graph already stored)");
                 true
             }
             Err(e) => return Err(map_ledger_error(e)),
         }
     };
 
-    // 4. Store verification receipt (skip if duplicate)
+    // 5. Store verification receipt (skip if duplicate)
     let verdict_str = result.verdict.to_string();
     let reason = result.reason.clone();
     let witness = result.witness.clone();
@@ -299,30 +313,33 @@ async fn submit_graph(
         .await
         .unwrap()
         .map_err(map_ledger_error)?;
-
     }
 
-    // 5. If accepted, compute score and try to admit to leaderboard
+    // 6. If accepted, compute score (canonical form) and try to admit
     let mut admitted = false;
     let mut rank: Option<u32> = None;
     let mut score_json: Option<Value> = None;
 
     if verdict_str == "accepted" {
-        // Score computation is CPU-intensive — run in blocking thread
+        // Score uses canonical form — nauty is called once (already done above
+        // for canonical_form, but compute_score_canonical does its own call
+        // to get clique counts too). This is correct since clique counts are
+        // isomorphism-invariant.
         let adj2 = adj.clone();
-        let cid2 = cid.clone();
-        let graph_score = tokio::task::spawn_blocking(move || {
-            compute_score(&adj2, &cid2)
+        let score_result = tokio::task::spawn_blocking(move || {
+            compute_score_canonical(&adj2)
         })
         .await
         .unwrap();
+
+        let graph_score = &score_result.score;
 
         let admit_score = AdmitScore {
             tier1_max: graph_score.c_omega.max(graph_score.c_alpha),
             tier1_min: graph_score.c_omega.min(graph_score.c_alpha),
             tier2_aut: graph_score.aut_order,
             tier3_cid: cid_hex.clone(),
-            score_json: serde_json::to_string(&graph_score).unwrap(),
+            score_json: serde_json::to_string(graph_score).unwrap(),
         };
 
         let ledger = state.ledger.clone();
@@ -345,7 +362,6 @@ async fn submit_graph(
                 rank = entry.rank,
                 "admitted to leaderboard"
             );
-
         } else {
             warn!(
                 graph_cid = %cid_hex,

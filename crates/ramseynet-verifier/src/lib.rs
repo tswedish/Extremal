@@ -3,6 +3,8 @@ pub mod clique;
 pub mod scoring;
 pub mod types;
 
+pub use automorphism::canonical_form;
+
 use ramseynet_graph::AdjacencyMatrix;
 use ramseynet_types::{GraphCid, Verdict};
 
@@ -108,7 +110,12 @@ mod tests {
         }
         let cid = compute_cid(&g);
         let result = verify_ramsey(&g, 3, 4, &cid);
-        assert_eq!(result.verdict, Verdict::Accepted, "Wagner graph should be accepted for R(3,4): {:?}", result);
+        assert_eq!(
+            result.verdict,
+            Verdict::Accepted,
+            "Wagner graph should be accepted for R(3,4): {:?}",
+            result
+        );
         assert!(result.witness.is_none());
     }
 
@@ -130,8 +137,18 @@ mod tests {
         let decoded = rgxf::from_json(&json).unwrap();
         assert_eq!(decoded.n(), 8);
         for i in 0..8 {
-            assert!(decoded.edge(i, (i + 1) % 8), "missing edge {}-{}", i, (i + 1) % 8);
-            assert!(decoded.edge(i, (i + 4) % 8), "missing edge {}-{}", i, (i + 4) % 8);
+            assert!(
+                decoded.edge(i, (i + 1) % 8),
+                "missing edge {}-{}",
+                i,
+                (i + 1) % 8
+            );
+            assert!(
+                decoded.edge(i, (i + 4) % 8),
+                "missing edge {}-{}",
+                i,
+                (i + 4) % 8
+            );
         }
     }
 
@@ -140,17 +157,27 @@ mod tests {
     fn petersen_rejected_for_r34() {
         let mut g = AdjacencyMatrix::new(10);
         // Outer cycle
-        for i in 0..5 { g.set_edge(i, (i + 1) % 5, true); }
+        for i in 0..5 {
+            g.set_edge(i, (i + 1) % 5, true);
+        }
         // Inner pentagram
-        for i in 0..5 { g.set_edge(5 + i, 5 + (i + 2) % 5, true); }
+        for i in 0..5 {
+            g.set_edge(5 + i, 5 + (i + 2) % 5, true);
+        }
         // Spokes
-        for i in 0..5 { g.set_edge(i, i + 5, true); }
+        for i in 0..5 {
+            g.set_edge(i, i + 5, true);
+        }
 
         let cid = compute_cid(&g);
         let result = verify_ramsey(&g, 3, 4, &cid);
         assert_eq!(result.verdict, Verdict::Rejected);
         assert_eq!(result.reason.as_deref(), Some("independent_set_found"));
         let witness = result.witness.unwrap();
-        assert_eq!(witness.len(), 4, "Petersen graph has alpha=4, witness should be size 4");
+        assert_eq!(
+            witness.len(),
+            4,
+            "Petersen graph has alpha=4, witness should be size 4"
+        );
     }
 }

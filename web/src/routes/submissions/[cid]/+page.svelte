@@ -7,6 +7,9 @@
 	let detail = $state<SubmissionDetail | null>(null);
 	let loading = $state(true);
 	let error = $state('');
+	let showRgxf = $state(false);
+	let includeMetadata = $state(false);
+	let copied = $state(false);
 
 	$effect(() => {
 		const cid = page.params.cid!;
@@ -31,6 +34,40 @@
 
 		return () => { cancelled = true; };
 	});
+
+	function rgxfString(rgxf: RgxfJson): string {
+		return JSON.stringify(rgxf, null, 2);
+	}
+
+	function csvLine(): string {
+		if (!detail || !detail.rgxf) return '';
+		const score = detail.score as Record<string, unknown> | null;
+		return [
+			detail.graph_cid,
+			detail.k,
+			detail.ell,
+			detail.n,
+			detail.verdict ?? '',
+			detail.reason ?? '',
+			detail.leaderboard_rank ?? '',
+			score?.c_omega ?? '',
+			score?.c_alpha ?? '',
+			score?.aut_order ?? '',
+			detail.submitted_at,
+			detail.rgxf.encoding,
+			detail.rgxf.bits_b64,
+		].join(',');
+	}
+
+	async function copyToClipboard() {
+		if (!detail?.rgxf) return;
+		const text = includeMetadata
+			? 'graph_cid,k,ell,n,verdict,reason,rank,c_omega,c_alpha,aut_order,submitted_at,encoding,bits_b64\n' + csvLine()
+			: rgxfString(detail.rgxf);
+		await navigator.clipboard.writeText(text);
+		copied = true;
+		setTimeout(() => { copied = false; }, 1500);
+	}
 </script>
 
 <svelte:head>
@@ -92,6 +129,30 @@
 		</div>
 
 		{#if detail.rgxf}
+			<section class="rgxf-section">
+				<div class="rgxf-header">
+					<button class="toggle-btn" onclick={() => showRgxf = !showRgxf}>
+						{showRgxf ? 'Hide' : 'Show'} RGXF
+					</button>
+					{#if showRgxf}
+						<label class="meta-checkbox">
+							<input type="checkbox" bind:checked={includeMetadata} />
+							Include metadata
+						</label>
+						<button class="copy-btn" onclick={copyToClipboard} aria-label="Copy to clipboard">
+							{#if copied}
+								<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3 3 7-7" stroke="var(--color-accepted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+							{:else}
+								<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="2" width="8" height="10" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="4" width="8" height="10" rx="1" stroke="currentColor" stroke-width="1.5" fill="var(--color-surface)"/></svg>
+							{/if}
+						</button>
+					{/if}
+				</div>
+				{#if showRgxf}
+					<pre class="rgxf-code">{rgxfString(detail.rgxf)}</pre>
+				{/if}
+			</section>
+
 			<section class="viz-section">
 				<h2>Graph Visualization</h2>
 				<div class="viz-row">
@@ -215,6 +276,84 @@
 		color: var(--color-rejected);
 		background: color-mix(in srgb, var(--color-rejected) 15%, transparent);
 	}
+
+	/* ── RGXF section ────────────────────────────────────────── */
+
+	.rgxf-section {
+		margin-top: 1.5rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.rgxf-header {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.toggle-btn {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: 0.375rem;
+		padding: 0.3rem 0.75rem;
+		cursor: pointer;
+		transition: border-color 0.2s, color 0.2s;
+	}
+
+	.toggle-btn:hover {
+		color: var(--color-accent);
+		border-color: var(--color-accent);
+	}
+
+	.meta-checkbox {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		cursor: pointer;
+	}
+
+	.meta-checkbox input {
+		accent-color: var(--color-accent);
+	}
+
+	.copy-btn {
+		background: none;
+		border: 1px solid var(--color-border);
+		border-radius: 0.375rem;
+		padding: 0.25rem 0.375rem;
+		cursor: pointer;
+		color: var(--color-text-muted);
+		display: flex;
+		align-items: center;
+		transition: border-color 0.2s, color 0.2s;
+	}
+
+	.copy-btn:hover {
+		color: var(--color-accent);
+		border-color: var(--color-accent);
+	}
+
+	.rgxf-code {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-text);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: 0.5rem;
+		padding: 0.75rem 1rem;
+		margin-top: 0.75rem;
+		overflow-x: auto;
+		white-space: pre;
+		line-height: 1.5;
+	}
+
+	/* ── Viz section ─────────────────────────────────────────── */
 
 	.viz-section {
 		margin-top: 2rem;

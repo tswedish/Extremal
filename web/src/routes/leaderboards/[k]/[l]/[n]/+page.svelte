@@ -109,6 +109,42 @@
 			});
 	}
 
+	/** Export leaderboard as CSV with full metadata + RGXF. */
+	async function exportCsv() {
+		if (!detail) return;
+		// Fetch all graphs (up to 100) to include RGXF in export
+		const allGraphs = await getLeaderboardGraphs(detail.k, detail.ell, detail.n, 100);
+
+		const header = 'rank,graph_cid,k,ell,n,c_max,c_min,aut_order,admitted_at,encoding,bits_b64';
+		const rows = detail.entries.map((e, i) => {
+			const g = allGraphs[i];
+			const enc = g?.encoding ?? '';
+			const bits = g?.bits_b64 ?? '';
+			return [
+				e.rank,
+				e.graph_cid,
+				detail!.k,
+				detail!.ell,
+				detail!.n,
+				e.tier1_max,
+				e.tier1_min,
+				e.tier2_aut,
+				e.admitted_at,
+				enc,
+				bits
+			].join(',');
+		});
+
+		const csv = [header, ...rows].join('\n');
+		const blob = new Blob([csv], { type: 'text/csv' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `ramseynet-R(${detail.k},${detail.ell})-n${detail.n}.csv`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
+
 	// Initial load + reload on param change
 	$effect(() => {
 		const k = Number(page.params.k);
@@ -216,7 +252,12 @@
 		<a href="/leaderboards" class="back-link">Leaderboards</a>
 
 		<h1>R({detail.k},{detail.ell}) <span class="n-label">n={detail.n}</span></h1>
-		<p class="subtitle">{detail.entries.length} ranked {detail.entries.length === 1 ? 'entry' : 'entries'}</p>
+		<div class="subtitle-row">
+			<p class="subtitle">{detail.entries.length} ranked {detail.entries.length === 1 ? 'entry' : 'entries'}</p>
+			{#if detail.entries.length > 0}
+				<button class="export-btn" onclick={exportCsv}>Export CSV</button>
+			{/if}
+		</div>
 
 		{#if detail.top_graph}
 			<section class="viz-section">
@@ -312,10 +353,33 @@
 		color: var(--color-accepted);
 	}
 
+	.subtitle-row {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		margin-bottom: 1.5rem;
+	}
+
 	.subtitle {
 		color: var(--color-text-muted);
 		font-size: 0.875rem;
-		margin-bottom: 1.5rem;
+	}
+
+	.export-btn {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: 0.375rem;
+		padding: 0.25rem 0.625rem;
+		cursor: pointer;
+		transition: border-color 0.2s, color 0.2s;
+	}
+
+	.export-btn:hover {
+		color: var(--color-accent);
+		border-color: var(--color-accent);
 	}
 
 	h2 {

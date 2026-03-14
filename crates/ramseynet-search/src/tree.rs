@@ -1,10 +1,35 @@
+//! Beam search over single-edge flips for Ramsey graph discovery.
+//!
+//! # Burst pattern in violation reduction
+//!
+//! When monitoring the search progress, violation counts tend to decrease in
+//! discrete bursts rather than smoothly. This is **expected behavior** for beam
+//! search over combinatorial landscapes:
+//!
+//! - The beam maintains diversity across many candidate graphs at a given
+//!   violation level, exploring the neighborhood of the current best.
+//! - When a single-edge mutation breaks through to a lower violation count,
+//!   the entire beam contracts toward that new basin — candidates that don't
+//!   share the breakthrough structure are evicted.
+//! - This represents a genuine **phase transition** in the search landscape:
+//!   the search has found a structural change that reduces violations, and
+//!   the beam re-centers around it.
+//!
+//! The `beam_width` parameter controls the exploration-exploitation tradeoff:
+//! wider beams explore more of the landscape before converging (more time
+//! between bursts, but potentially finding better solutions). Narrower beams
+//! converge faster but may miss promising regions.
+//!
+//! The jumpiness is a feature, not a bug — it indicates the search is properly
+//! exploring the combinatorial landscape before finding structural breakthroughs.
+
 use std::collections::HashSet;
 
-use rand::rngs::SmallRng;
-use rand::seq::SliceRandom;
 use ramseynet_graph::{compute_cid, AdjacencyMatrix};
 use ramseynet_types::GraphCid;
 use ramseynet_verifier::clique::count_cliques;
+use rand::rngs::SmallRng;
+use rand::seq::SliceRandom;
 
 use crate::init::{init_graph, InitStrategy};
 use crate::search::{SearchResult, Searcher};
@@ -80,10 +105,17 @@ impl Searcher for TreeSearcher {
         }
 
         observer.on_progress(&ProgressInfo {
-            graph: &seed, n, k, ell, strategy: "tree",
-            iteration: iters_used, max_iters, valid: seed_score == 0,
+            graph: &seed,
+            n,
+            k,
+            ell,
+            strategy: "tree",
+            iteration: iters_used,
+            max_iters,
+            valid: seed_score == 0,
             violation_score: seed_score as u32,
-            k_cliques: Some(seed_kc), ell_indsets: Some(seed_ei),
+            k_cliques: Some(seed_kc),
+            ell_indsets: Some(seed_ei),
         });
 
         // Current beam: Vec of (graph, score)
@@ -144,10 +176,17 @@ impl Searcher for TreeSearcher {
                         // Valid graph found — submit immediately
                         observer.on_valid_found(&child, n, k, ell, "tree", iters_used);
                         observer.on_progress(&ProgressInfo {
-                            graph: &child, n, k, ell, strategy: "tree",
-                            iteration: iters_used, max_iters, valid: true,
+                            graph: &child,
+                            n,
+                            k,
+                            ell,
+                            strategy: "tree",
+                            iteration: iters_used,
+                            max_iters,
+                            valid: true,
                             violation_score: 0,
-                            k_cliques: Some(0), ell_indsets: Some(0),
+                            k_cliques: Some(0),
+                            ell_indsets: Some(0),
                         });
                         best_valid = Some(child.clone());
                     }
@@ -172,8 +211,13 @@ impl Searcher for TreeSearcher {
                                 (&candidates.last().unwrap().0, score, kc, ei)
                             };
                         observer.on_progress(&ProgressInfo {
-                            graph: display_graph, n, k, ell, strategy: "tree",
-                            iteration: iters_used, max_iters,
+                            graph: display_graph,
+                            n,
+                            k,
+                            ell,
+                            strategy: "tree",
+                            iteration: iters_used,
+                            max_iters,
                             valid: best_valid.is_some(),
                             violation_score: display_score as u32,
                             k_cliques: Some(display_kc),
@@ -233,7 +277,10 @@ mod tests {
         let searcher = TreeSearcher::default();
         let mut rng = SmallRng::seed_from_u64(42);
         let result = searcher.search(5, 3, 3, 10_000, &mut rng, &NoOpObserver);
-        assert!(result.valid, "tree search should find a valid R(3,3) graph on 5 vertices");
+        assert!(
+            result.valid,
+            "tree search should find a valid R(3,3) graph on 5 vertices"
+        );
         assert_eq!(result.graph.n(), 5);
     }
 
@@ -256,7 +303,10 @@ mod tests {
         let searcher = TreeSearcher::default();
         let mut rng = SmallRng::seed_from_u64(42);
         let result = searcher.search(17, 4, 4, 100_000, &mut rng, &NoOpObserver);
-        assert!(result.valid, "tree search should find a valid R(4,4) graph on 17 vertices");
+        assert!(
+            result.valid,
+            "tree search should find a valid R(4,4) graph on 17 vertices"
+        );
         assert_eq!(result.graph.n(), 17);
     }
 

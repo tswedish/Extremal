@@ -97,6 +97,30 @@ impl AdjacencyMatrix {
         comp
     }
 
+    /// Relabel vertices according to a permutation.
+    ///
+    /// `perm[i]` gives the new label for old vertex `i`.
+    /// The returned graph has edge (perm[i], perm[j]) iff the original has edge (i, j).
+    ///
+    /// # Panics
+    /// Panics if `perm.len() != n`.
+    pub fn permute_vertices(&self, perm: &[u32]) -> Self {
+        assert_eq!(
+            perm.len(),
+            self.n as usize,
+            "permutation length must equal vertex count"
+        );
+        let mut result = Self::new(self.n);
+        for i in 0..self.n {
+            for j in (i + 1)..self.n {
+                if self.edge(i, j) {
+                    result.set_edge(perm[i as usize], perm[j as usize], true);
+                }
+            }
+        }
+        result
+    }
+
     /// Get the packed bit vector (for serialization).
     pub fn packed_bits(&self) -> &[u8] {
         &self.bits
@@ -182,6 +206,35 @@ mod tests {
             }
         }
         assert_eq!(g.num_edges(), 10); // 5 choose 2
+    }
+
+    #[test]
+    fn permute_vertices_relabels() {
+        // Build a path: 0-1-2-3
+        let mut g = AdjacencyMatrix::new(4);
+        g.set_edge(0, 1, true);
+        g.set_edge(1, 2, true);
+        g.set_edge(2, 3, true);
+
+        // Reverse the labeling: 0->3, 1->2, 2->1, 3->0
+        let perm = vec![3, 2, 1, 0];
+        let h = g.permute_vertices(&perm);
+
+        // Original edges (0,1),(1,2),(2,3) become (3,2),(2,1),(1,0) = same path
+        assert!(h.edge(0, 1));
+        assert!(h.edge(1, 2));
+        assert!(h.edge(2, 3));
+        assert_eq!(h.num_edges(), 3);
+    }
+
+    #[test]
+    fn permute_vertices_identity() {
+        let mut g = AdjacencyMatrix::new(5);
+        g.set_edge(0, 1, true);
+        g.set_edge(2, 4, true);
+        let perm = vec![0, 1, 2, 3, 4];
+        let h = g.permute_vertices(&perm);
+        assert_eq!(g, h);
     }
 
     #[test]

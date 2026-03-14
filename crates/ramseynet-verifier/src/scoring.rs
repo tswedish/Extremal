@@ -15,7 +15,7 @@ use ramseynet_graph::AdjacencyMatrix;
 use ramseynet_types::GraphCid;
 use serde::{Deserialize, Serialize};
 
-use crate::automorphism::automorphism_group_order;
+use crate::automorphism::canonical_form;
 use crate::clique::count_max_cliques;
 
 /// Full score for a discovered graph.
@@ -85,15 +85,42 @@ impl Ord for GraphScore {
     }
 }
 
-/// Compute the full 3-tier score for a graph.
+/// Result of scoring a graph, including its canonical form.
+pub struct ScoreResult {
+    /// The 3-tier score.
+    pub score: GraphScore,
+    /// The graph in canonical form (nauty canonical labeling applied).
+    pub canonical_graph: AdjacencyMatrix,
+}
+
+/// Compute the full 3-tier score for a graph, producing its canonical form.
 ///
 /// Computes clique/independence structure on G and complement, plus
-/// automorphism group order via nauty.
+/// automorphism group order and canonical labeling via nauty (single call).
+/// The CID used in the score is computed from the **canonical** form.
+pub fn compute_score_canonical(graph: &AdjacencyMatrix) -> ScoreResult {
+    let (omega, c_omega) = count_max_cliques(graph);
+    let comp = graph.complement();
+    let (alpha, c_alpha) = count_max_cliques(&comp);
+    let (canonical_graph, aut_order) = canonical_form(graph);
+
+    let canonical_cid = ramseynet_graph::compute_cid(&canonical_graph);
+    let score = GraphScore::new(omega, alpha, c_omega, c_alpha, aut_order, canonical_cid);
+
+    ScoreResult {
+        score,
+        canonical_graph,
+    }
+}
+
+/// Compute the full 3-tier score for a graph (legacy: uses provided CID).
+///
+/// Prefer `compute_score_canonical` which derives the CID from the canonical form.
 pub fn compute_score(graph: &AdjacencyMatrix, cid: &GraphCid) -> GraphScore {
     let (omega, c_omega) = count_max_cliques(graph);
     let comp = graph.complement();
     let (alpha, c_alpha) = count_max_cliques(&comp);
-    let aut_order = automorphism_group_order(graph);
+    let (_, aut_order) = canonical_form(graph);
 
     GraphScore::new(omega, alpha, c_omega, c_alpha, aut_order, cid.clone())
 }

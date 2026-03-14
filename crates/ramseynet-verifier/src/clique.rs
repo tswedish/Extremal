@@ -78,7 +78,13 @@ pub fn count_cliques(adj: &AdjacencyMatrix, k: u32) -> u64 {
     count
 }
 
-fn count_backtrack(adj: &AdjacencyMatrix, current: &mut Vec<u32>, start: u32, k: u32, count: &mut u64) {
+fn count_backtrack(
+    adj: &AdjacencyMatrix,
+    current: &mut Vec<u32>,
+    start: u32,
+    k: u32,
+    count: &mut u64,
+) {
     if current.len() as u32 == k {
         *count += 1;
         return;

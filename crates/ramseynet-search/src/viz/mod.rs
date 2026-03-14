@@ -361,12 +361,14 @@ impl SearchObserver for CollectorObserver {
         strategy: &str,
         iteration: u64,
     ) {
-        let cid = compute_cid(graph);
-        let score = ramseynet_verifier::scoring::compute_score(graph, &cid);
+        // Use canonical form for dedup and scoring — isomorphic graphs
+        // map to the same CID and are collected only once.
+        let score_result = ramseynet_verifier::scoring::compute_score_canonical(graph);
+        let canonical_cid = compute_cid(&score_result.canonical_graph);
         self.collector.push(Discovery {
-            graph: graph.clone(),
-            score: score.clone(),
-            cid: cid.clone(),
+            graph: score_result.canonical_graph,
+            score: score_result.score,
+            cid: canonical_cid,
         });
         if let Some(ref viz) = self.viz {
             viz.on_valid_found(graph, n, k, ell, strategy, iteration);

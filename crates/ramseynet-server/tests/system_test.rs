@@ -682,3 +682,82 @@ async fn test_multiple_entries_ranking() {
     eprintln!("[PASS] leaderboard has 2 ranked entries");
 }
 
+// ── Isomorphic graph deduplication test ─────────────────────────────
+
+#[tokio::test]
+async fn test_isomorphic_dedup() {
+    let (base, _handle) = start_server().await;
+    let client = reqwest::Client::new();
+
+    // Build C5 with standard labeling: 0-1-2-3-4-0
+    let c5_standard = build_c5();
+
+    // Build C5 with different labeling: 0-2-4-1-3-0 (still a 5-cycle, isomorphic)
+    let mut g = AdjacencyMatrix::new(5);
+    g.set_edge(0, 2, true);
+    g.set_edge(2, 4, true);
+    g.set_edge(4, 1, true);
+    g.set_edge(1, 3, true);
+    g.set_edge(3, 0, true);
+    let c5_relabeled = rgxf::to_json(&g);
+
+    // 1. Submit standard C5 for R(3,3) n=5
+    let resp = client
+        .post(format!("{base}/api/submit"))
+        .json(&serde_json::json!({
+            "k": 3, "ell": 3, "n": 5,
+            "graph": c5_standard,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["verdict"], "accepted");
+    assert_eq!(body["admitted"], true);
+    let canonical_cid = body["graph_cid"].as_str().unwrap().to_string();
+    eprintln!("[PASS] standard C5 submitted, canonical CID: {}...", &canonical_cid[..16]);
+
+    // 2. Submit relabeled C5 — should be detected as isomorphic duplicate
+    let resp = client
+        .post(format!("{base}/api/submit"))
+        .json(&serde_json::json!({
+            "k": 3, "ell": 3, "n": 5,
+            "graph": c5_relabeled,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "isomorphic graph should return 200 (duplicate)");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["graph_cid"], canonical_cid, "isomorphic graph should produce same canonical CID");
+    assert_eq!(body["verdict"], "accepted");
+    eprintln!("[PASS] relabeled C5 detected as isomorphic duplicate");
+
+    // 3. Leaderboard should have exactly 1 entry
+    let resp = client
+        .get(format!("{base}/api/leaderboards/3/3/5"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let entries = body["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "isomorphic graphs should not create separate leaderboard entries");
+    assert_eq!(entries[0]["graph_cid"], canonical_cid);
+    eprintln!("[PASS] leaderboard has exactly 1 entry for isomorphism class");
+
+    // 4. Verify endpoint also returns canonical CID
+    let req = make_verify_request(3, 3, c5_relabeled.clone(), true);
+    let resp = client
+        .post(format!("{base}/api/verify"))
+        .json(&req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["graph_cid"], canonical_cid, "verify should return canonical CID");
+    eprintln!("[PASS] verify returns canonical CID for relabeled graph");
+}
+

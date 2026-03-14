@@ -100,6 +100,38 @@ impl ServerClient {
         Ok(body.graphs)
     }
 
+    /// Fetch leaderboard entry CIDs for local cache.
+    pub async fn get_leaderboard_cids(
+        &self,
+        k: u32,
+        ell: u32,
+        n: u32,
+    ) -> Result<Vec<String>, SearchError> {
+        let url = format!(
+            "{}/api/leaderboards/{}/{}/{}",
+            self.base_url, k, ell, n
+        );
+        let resp = self.client.get(&url).send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SearchError::ServerError(format!("{status}: {body}")));
+        }
+
+        let body: serde_json::Value = resp.json().await?;
+        let cids = body["entries"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|e| e["graph_cid"].as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(cids)
+    }
+
     /// Submit a graph to the server.
     pub async fn submit(
         &self,
