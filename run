@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # RamseyNet dev runner
 #
-# Usage: ./run <command>
+# Usage: ./run <command> [--release] [options...]
 #
 # Commands:
 #   ci         Full CI: clippy + tests + web build
@@ -15,5 +15,7 @@
 #   search     Search worker (--k, --ell, --n for auto-start; omit for idle mode)
 #   bench      Criterion benchmarks for verifier/scoring
 #   seed       Seed DB with test graphs
+#
+# Add --release to build/server/search for optimized (5-20x faster) builds.
 
 bash "$(dirname "$0")/scripts/wsl-dev.sh" "$@"

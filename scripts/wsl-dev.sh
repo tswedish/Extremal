@@ -31,18 +31,32 @@ source "$HOME/.cargo/env" 2>/dev/null || true
 cmd="${1:-ci}"
 shift 2>/dev/null || true
 
+# Parse --release flag (can appear anywhere in the remaining args)
+CARGO_PROFILE=""
+PROFILE_LABEL="dev"
+remaining_args=()
+for arg in "$@"; do
+  if [ "$arg" = "--release" ]; then
+    CARGO_PROFILE="--release"
+    PROFILE_LABEL="release"
+  else
+    remaining_args+=("$arg")
+  fi
+done
+set -- "${remaining_args[@]+"${remaining_args[@]}"}"
+
 case "$cmd" in
   test)
-    echo "=== Running tests ==="
-    cargo test --all "$@"
+    echo "=== Running tests ($PROFILE_LABEL) ==="
+    cargo test --all $CARGO_PROFILE "$@"
     ;;
   clippy)
     echo "=== Running clippy ==="
     cargo clippy --all-targets -- -D warnings "$@"
     ;;
   build)
-    echo "=== Building all crates ==="
-    cargo build --all "$@"
+    echo "=== Building all crates ($PROFILE_LABEL) ==="
+    cargo build --all $CARGO_PROFILE "$@"
     ;;
   web)
     echo "=== Building web app ==="
@@ -69,20 +83,20 @@ case "$cmd" in
     echo "=== CI passed! ==="
     ;;
   server)
-    echo "=== Starting server on :3001 ==="
-    cargo run -p ramseynet-server "$@"
+    echo "=== Starting server ($PROFILE_LABEL) ==="
+    cargo run $CARGO_PROFILE -p ramseynet-server -- "$@"
     ;;
   server-log)
     LOGDIR="$REPO/logs"
     mkdir -p "$LOGDIR"
     TIMESTAMP=$(date +%Y%m%d-%H%M%S)
     LOGFILE="$LOGDIR/server-$TIMESTAMP.log"
-    echo "=== Starting server on :3001 (logging to $LOGFILE) ==="
-    RUST_LOG=info cargo run -p ramseynet-server "$@" 2>&1 | tee "$LOGFILE"
+    echo "=== Starting server ($PROFILE_LABEL, logging to $LOGFILE) ==="
+    RUST_LOG=info cargo run $CARGO_PROFILE -p ramseynet-server -- "$@" 2>&1 | tee "$LOGFILE"
     ;;
   search)
-    echo "=== Starting search worker ==="
-    cargo run -p ramseynet-worker -- "$@"
+    echo "=== Starting search worker ($PROFILE_LABEL) ==="
+    cargo run $CARGO_PROFILE -p ramseynet-worker -- "$@"
     ;;
   bench)
     echo "=== Running benchmarks ==="
@@ -98,6 +112,7 @@ case "$cmd" in
     ;;
   *)
     echo "Usage: wsl-dev.sh {test|clippy|build|web|web-dev|ci|server|server-log|search|bench|seed|e2e}"
+    echo "  Add --release for optimized builds (server, search, build, test)"
     exit 1
     ;;
 esac
