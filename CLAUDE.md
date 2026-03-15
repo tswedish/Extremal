@@ -21,17 +21,20 @@ Other commands: `clippy`, `build`, `web` (production build), `bench` (criterion 
 ```
 ./run search --k 3 --ell 3 --n 5                     # all strategies, default server
 ./run search --k 3 --ell 3 --n 5 --strategy tree
+./run search --k 5 --ell 5 --n 25 --strategy evo     # evolutionary SA
 ./run search --k 3 --ell 4 --n 8 --server http://remote:3001 --max-iters 50000
 ./run search --k 4 --ell 4 --n 17 --offline --port 8080  # no server needed
 ```
 
-Options: `--strategy {tree|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`.
+Options: `--strategy {tree|evo|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`.
 
 **Discovery submission:** All valid graphs found during search (not just the final result) are collected in a bounded, score-sorted buffer (default 1,000, configurable via `--collector-capacity`) and submitted to the server. This is especially useful for tree/beam search which discovers many valid graphs per run.
 
 **Leaderboard sampling:** When using `--init leaderboard`, the `--sample-bias` parameter (0.0–1.0, default 0.5) controls how graphs are sampled from the server pool. 0.0 = uniform, 1.0 = strongly prefer top-ranked. `--leaderboard-sample-size` (default 100) controls how many graphs are fetched for the seed pool.
 
 **Incremental CID sync:** The worker uses the `/api/leaderboards/{k}/{l}/{n}/cids?since=<timestamp>` endpoint to incrementally sync known CIDs from the server, fetching only newly admitted entries after the first full sync. This avoids downloading the full leaderboard each round.
+
+**Cross-round state:** Strategies can persist opaque state across rounds via `carry_state` on `SearchJob`/`SearchResult`. The evo strategy uses this to maintain its population across server sync boundaries.
 
 ## Architecture
 
@@ -48,7 +51,7 @@ Rust workspace (`crates/`) + SvelteKit 2 (`web/`).
 | `ramseynet-server` | Axum REST API, full submit lifecycle |
 | `ramseynet-worker-api` | Search strategy trait, job/result schemas, observer interface |
 | `ramseynet-worker-core` | Worker engine: leaderboard sync, submission pipeline, init |
-| `ramseynet-strategies` | Search strategy implementations (tree/beam search) |
+| `ramseynet-strategies` | Search strategy implementations (tree/beam search, evolutionary SA) |
 | `ramseynet-worker` | CLI binary + worker web-app (visualization) |
 
 ## Leaderboard System

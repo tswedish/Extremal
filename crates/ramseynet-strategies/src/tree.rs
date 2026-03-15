@@ -266,6 +266,7 @@ impl SearchStrategy for TreeSearch {
             best_graph: best,
             iterations_used: iters_used,
             discoveries: Vec::new(), // all discoveries streamed via on_discovery
+            carry_state: None,       // tree search is stateless across rounds
         }
     }
 }
@@ -307,6 +308,7 @@ mod tests {
             config: serde_json::json!({}),
             known_cids: HashSet::new(),
             max_known_cids: 10_000,
+            carry_state: None,
         }
     }
 

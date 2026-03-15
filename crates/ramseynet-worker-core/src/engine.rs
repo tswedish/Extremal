@@ -255,6 +255,9 @@ pub async fn run_engine(
         let mut consecutive_failures: u32 = 0;
         let mut active_strategy_id: Option<String> = None;
 
+        // Opaque strategy state carried across rounds
+        let mut strategy_state: Option<Box<dyn std::any::Any + Send>> = None;
+
         // Runtime metrics — accumulated across rounds
         let mut metrics = WorkerMetrics::default();
 
@@ -339,6 +342,7 @@ pub async fn run_engine(
                                     // Clear state for new search
                                     server_cids.clear();
                                     local_pool.clear();
+                                    strategy_state = None;
                                     threshold = AdmissionThreshold::open();
                                     cid_sync_cursor = None;
                                     leaderboard_total = 0;
@@ -574,6 +578,7 @@ pub async fn run_engine(
                         config: cfg.strategy_config.clone(),
                         known_cids: server_cids.snapshot(),
                         max_known_cids: cfg.max_known_cids,
+                        carry_state: strategy_state.take(),
                     };
 
                     let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -683,10 +688,13 @@ pub async fn run_engine(
                     };
 
                     // Handle strategy panic (result is None)
-                    let result = match result {
+                    let mut result = match result {
                         Some(r) => r,
                         None => continue, // state already set to Idle above
                     };
+
+                    // Preserve strategy state for next round
+                    strategy_state = result.carry_state.take();
 
                     let elapsed = start.elapsed();
 

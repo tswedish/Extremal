@@ -56,7 +56,7 @@ See **[TESTING.md](TESTING.md)** for a full interactive walkthrough.
 ./run search --k 5 --ell 5 --n 25 --init leaderboard --sample-bias 0.3
 ```
 
-Options: `--strategy {tree|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`.
+Options: `--strategy {tree|evo|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`.
 
 ## Project Structure
 
@@ -69,7 +69,7 @@ crates/
   ramseynet-server/       Axum HTTP server
   ramseynet-worker-api/   Search strategy trait + job/result schemas
   ramseynet-worker-core/  Worker engine: leaderboard sync, submission, init
-  ramseynet-strategies/   Search strategy implementations (tree/beam search)
+  ramseynet-strategies/   Search strategy implementations (tree/beam, evolutionary SA)
   ramseynet-worker/       CLI binary + worker web-app (visualization)
 web/                      SvelteKit 2 / Svelte 5 frontend (server web-app)
 test-vectors/             Shared test data (small_graphs.json)
@@ -143,7 +143,7 @@ Port 3001, prefix `/api/`. SQLite at `./ramseynet.db`.
 | 2 — Verifier | Complete | Clique detection, OVWC-1 WASM |
 | 3 — Server + Ledger | Complete | Axum API, SQLite |
 | 4 — Web Application | Complete | Full interactive frontend |
-| 5 — Search Worker | Complete | Tree/beam search |
+| 5 — Search Worker | Complete | Tree/beam search, evolutionary SA |
 | 5.5 — Leaderboard | Complete | 4-tier scoring (Goodman gap), 10k-cap leaderboards, pagination |
 | 6 — P2P Networking | Pending | ed25519 identity, libp2p, duels |
 

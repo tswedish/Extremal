@@ -1,5 +1,6 @@
 //! Search strategy trait and job/result types.
 
+use std::any::Any;
 use std::collections::HashSet;
 
 use ramseynet_graph::AdjacencyMatrix;
@@ -32,7 +33,6 @@ pub trait SearchStrategy: Send + Sync + 'static {
 ///
 /// The platform constructs this before spawning the search. Strategies
 /// should not need anything beyond what's in this struct.
-#[derive(Clone, Debug)]
 pub struct SearchJob {
     /// Ramsey parameter k (clique size).
     pub k: u32,
@@ -55,10 +55,12 @@ pub struct SearchJob {
     /// Maximum size for the known CIDs set. Strategies should respect
     /// this when the set grows beyond this size during search.
     pub max_known_cids: usize,
+    /// Opaque state carried over from the previous round's SearchResult.
+    /// None on the first round or after a strategy switch.
+    pub carry_state: Option<Box<dyn Any + Send>>,
 }
 
 /// Output from a completed search job.
-#[derive(Clone, Debug)]
 pub struct SearchResult {
     /// The best graph found (may or may not be valid).
     pub best_graph: Option<AdjacencyMatrix>,
@@ -70,6 +72,9 @@ pub struct SearchResult {
     /// score these (compute_score_canonical), deduplicate by canonical
     /// CID, and submit to the server.
     pub discoveries: Vec<RawDiscovery>,
+    /// Opaque state to carry over to the next round. The platform stores
+    /// this and passes it back as `SearchJob::carry_state` in the next round.
+    pub carry_state: Option<Box<dyn Any + Send>>,
 }
 
 /// A valid graph discovered during search, before platform scoring.
