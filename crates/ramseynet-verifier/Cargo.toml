@@ -13,6 +13,13 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 nauty-Traces-sys = "0.11"
 
+[dev-dependencies]
+criterion = { workspace = true }
+
 [[bin]]
 name = "ovwc1"
 path = "src/ovwc.rs"
+
+[[bench]]
+name = "scoring"
+harness = false

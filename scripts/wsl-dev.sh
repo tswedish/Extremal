@@ -84,6 +84,10 @@ case "$cmd" in
     echo "=== Starting search worker ==="
     cargo run -p ramseynet-search -- "$@"
     ;;
+  bench)
+    echo "=== Running benchmarks ==="
+    cargo bench -p ramseynet-verifier "$@"
+    ;;
   seed)
     echo "=== Seeding ledger ==="
     bash "$REPO/scripts/seed-ledger.sh" "$@"
@@ -93,7 +97,7 @@ case "$cmd" in
     bash "$REPO/scripts/e2e-test.sh" "$@"
     ;;
   *)
-    echo "Usage: wsl-dev.sh {test|clippy|build|web|web-dev|ci|server|server-log|search|seed|e2e}"
+    echo "Usage: wsl-dev.sh {test|clippy|build|web|web-dev|ci|server|server-log|search|bench|seed|e2e}"
     exit 1
     ;;
 esac

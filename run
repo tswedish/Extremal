@@ -13,6 +13,7 @@
 #   server     API server on :3001
 #   server-log API server with file logging (logs/)
 #   search     Search worker (requires --k, --ell, --n)
+#   bench      Criterion benchmarks for verifier/scoring
 #   seed       Seed DB with test graphs
 
 bash "$(dirname "$0")/scripts/wsl-dev.sh" "$@"

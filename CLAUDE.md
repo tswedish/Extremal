@@ -14,7 +14,7 @@ Permissionless protocol for distributed Ramsey graph search and deterministic ge
 ./run seed        # Seed DB with test data
 ```
 
-Other commands: `clippy`, `build`, `web` (production build).
+Other commands: `clippy`, `build`, `web` (production build), `bench` (criterion benchmarks).
 
 ### Search Worker
 
