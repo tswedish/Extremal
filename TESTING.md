@@ -296,7 +296,7 @@ Expected: worker connects, searches for valid R(3,3) graphs on n=5 vertices, sub
 
 ```bash
 # No server needed — search with local viz only
-./run search --k 3 --ell 3 --n 5 --offline --viz-port 8080
+./run search --k 3 --ell 3 --n 5 --offline --port 8080
 ```
 
 Open http://localhost:8080 to see the search visualization dashboard.

@@ -2,13 +2,20 @@
 
 /// Observer for search progress. Strategies call these methods during
 /// execution; the platform provides the implementation.
-///
-/// Simplified from the old observer pattern: no `on_valid_found` (strategies
-/// return discoveries in SearchResult), no `known_cids` (provided via SearchJob).
 pub trait SearchObserver: Send + Sync {
     /// Report progress during search. Called periodically (e.g., every 100
     /// iterations) to update visualizations and metrics.
     fn on_progress(&self, info: &ProgressInfo);
+
+    /// Report a valid graph discovered mid-search. The platform will score
+    /// and submit it periodically. Strategies should call this immediately
+    /// when a valid graph is found, rather than waiting until search ends.
+    ///
+    /// The graph does NOT need to be in canonical form — the platform handles
+    /// canonicalization and dedup.
+    fn on_discovery(&self, discovery: &crate::strategy::RawDiscovery) {
+        let _ = discovery; // default no-op
+    }
 
     /// Check if the search should be cancelled (e.g., shutdown signal).
     /// Strategies should check this periodically (every ~100 iterations).

@@ -1,4 +1,5 @@
 //! Axum-based viz server with embedded HTML page and WebSocket streaming.
+//! Handles both outgoing viz data and incoming worker commands.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,8 +9,9 @@ use axum::extract::{State, WebSocketUpgrade};
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::Router;
-use tokio::sync::watch;
-use tracing::info;
+use ramseynet_worker_api::{WorkerCommand, WorkerEvent};
+use tokio::sync::{mpsc, watch};
+use tracing::{debug, info, warn};
 
 use super::{VizHandle, VizMessage};
 
@@ -17,14 +19,20 @@ const PAGE_HTML: &str = include_str!("page.html");
 
 struct AppState {
     viz: Arc<VizHandle>,
+    cmd_tx: mpsc::Sender<WorkerCommand>,
+    event_rx: watch::Receiver<Option<WorkerEvent>>,
+    strategies: Vec<ramseynet_worker_api::StrategyInfo>,
 }
 
 pub async fn start_viz_server(
     port: u16,
     viz: Arc<VizHandle>,
+    cmd_tx: mpsc::Sender<WorkerCommand>,
+    event_rx: watch::Receiver<Option<WorkerEvent>>,
+    strategies: Vec<ramseynet_worker_api::StrategyInfo>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let state = Arc::new(AppState { viz });
+    let state = Arc::new(AppState { viz, cmd_tx, event_rx, strategies });
 
     let app = Router::new()
         .route("/", get(index_handler))
@@ -65,6 +73,16 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
         return;
     }
 
+    // Send available strategies with config schemas
+    if !state.strategies.is_empty() {
+        let strat_msg = VizMessage::Strategies {
+            strategies: state.strategies.clone(),
+        };
+        if send_json(&mut socket, &strat_msg).await.is_err() {
+            return;
+        }
+    }
+
     // Send current leaderboard state so reconnecting browsers see the full board
     let lb_rx = state.viz.subscribe_leaderboard();
     let current_lb = lb_rx.borrow().clone();
@@ -75,8 +93,12 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
         }
     }
 
+    // Request current status so the UI initializes correctly
+    let _ = state.cmd_tx.send(WorkerCommand::Status).await;
+
     let mut snapshot_rx = state.viz.subscribe_snapshot();
     let mut lb_rx = state.viz.subscribe_leaderboard();
+    let mut event_rx = state.event_rx.clone();
     let mut interval = tokio::time::interval(Duration::from_millis(50));
 
     loop {
@@ -92,7 +114,7 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
             }
             result = lb_rx.changed() => {
                 if result.is_err() {
-                    break; // channel closed
+                    break;
                 }
                 let entries = lb_rx.borrow_and_update().clone();
                 let msg = VizMessage::Leaderboard { entries };
@@ -100,8 +122,37 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
                     break;
                 }
             }
+            result = event_rx.changed() => {
+                if result.is_err() {
+                    break;
+                }
+                let event = event_rx.borrow_and_update().clone();
+                if let Some(event) = event {
+                    let msg = match event {
+                        WorkerEvent::Status(status) => VizMessage::Status(status),
+                        WorkerEvent::Error { message } => VizMessage::Error { message },
+                        WorkerEvent::Strategies { strategies } => VizMessage::Strategies { strategies },
+                    };
+                    if send_json(&mut socket, &msg).await.is_err() {
+                        break;
+                    }
+                }
+            }
             msg = socket.recv() => {
                 match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        match serde_json::from_str::<WorkerCommand>(&text) {
+                            Ok(cmd) => {
+                                debug!(?cmd, "received command from UI");
+                                if let Err(e) = state.cmd_tx.send(cmd).await {
+                                    warn!("failed to send command: {e}");
+                                }
+                            }
+                            Err(e) => {
+                                debug!("ignoring invalid command: {e}");
+                            }
+                        }
+                    }
                     Some(Ok(Message::Close(_))) | None => break,
                     _ => {}
                 }

@@ -52,11 +52,11 @@ See **[TESTING.md](TESTING.md)** for a full interactive walkthrough.
 ```
 ./run search --k 3 --ell 3 --n 5                     # all strategies, default server
 ./run search --k 3 --ell 3 --n 5 --strategy greedy
-./run search --k 4 --ell 4 --n 17 --offline --viz-port 8080  # no server needed
+./run search --k 4 --ell 4 --n 17 --offline --port 8080  # no server needed
 ./run search --k 5 --ell 5 --n 25 --init leaderboard --sample-bias 0.3
 ```
 
-Options: `--strategy {greedy|local|annealing|tree|all}`, `--init {perturbed-paley|paley|random|balanced|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--tabu-tenure N`, `--initial-temp F`, `--cooling-rate F`, `--beam-width N`, `--max-depth N`, `--viz-port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`.
+Options: `--strategy {tree|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`.
 
 ## Project Structure
 

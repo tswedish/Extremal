@@ -25,7 +25,8 @@ use ramseynet_graph::{compute_cid, AdjacencyMatrix};
 use ramseynet_types::GraphCid;
 use ramseynet_verifier::clique::count_cliques;
 use ramseynet_worker_api::{
-    ProgressInfo, RawDiscovery, SearchJob, SearchObserver, SearchResult, SearchStrategy,
+    ConfigParam, ParamType, ProgressInfo, RawDiscovery, SearchJob, SearchObserver, SearchResult,
+    SearchStrategy,
 };
 
 /// Tree/beam search strategy.
@@ -42,6 +43,27 @@ impl SearchStrategy for TreeSearch {
 
     fn name(&self) -> &str {
         "Tree/Beam Search"
+    }
+
+    fn config_schema(&self) -> Vec<ConfigParam> {
+        vec![
+            ConfigParam {
+                name: "beam_width".into(),
+                label: "Beam Width".into(),
+                description: "Number of candidates maintained at each depth level".into(),
+                param_type: ParamType::Int { min: 1, max: 10000 },
+                default: serde_json::json!(100),
+            },
+            ConfigParam {
+                name: "max_depth".into(),
+                label: "Max Depth".into(),
+                description:
+                    "Maximum depth levels to explore (each level tries all single-edge flips)"
+                        .into(),
+                param_type: ParamType::Int { min: 1, max: 100 },
+                default: serde_json::json!(10),
+            },
+        ]
     }
 
     fn search(&self, job: &SearchJob, observer: &dyn SearchObserver) -> SearchResult {
@@ -168,11 +190,13 @@ impl SearchStrategy for TreeSearch {
                     iters_used += 1;
 
                     if score == 0 {
-                        // Valid graph found — collect for platform scoring
-                        discoveries.push(RawDiscovery {
+                        // Valid graph found — stream to platform immediately
+                        let raw = RawDiscovery {
                             graph: child.clone(),
                             iteration: iters_used,
-                        });
+                        };
+                        observer.on_discovery(&raw);
+                        discoveries.push(raw);
                         observer.on_progress(&ProgressInfo {
                             graph: child.clone(),
                             n,

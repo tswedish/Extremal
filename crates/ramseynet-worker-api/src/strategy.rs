@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use ramseynet_graph::AdjacencyMatrix;
 use ramseynet_types::GraphCid;
 
+use crate::command::ConfigParam;
 use crate::observer::SearchObserver;
 
 /// A search strategy that can be registered, discovered, and invoked.
@@ -18,6 +19,10 @@ pub trait SearchStrategy: Send + Sync + 'static {
 
     /// Human-readable name.
     fn name(&self) -> &str;
+
+    /// Describe the configuration parameters this strategy accepts.
+    /// Used by the control UI to render dynamic config forms.
+    fn config_schema(&self) -> Vec<ConfigParam>;
 
     /// Execute a search job. Must be deterministic given the same job seed.
     fn search(&self, job: &SearchJob, observer: &dyn SearchObserver) -> SearchResult;

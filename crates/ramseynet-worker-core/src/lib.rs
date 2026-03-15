@@ -13,6 +13,7 @@ pub mod init;
 pub use engine::{EngineConfig, WorkerEngine};
 pub use error::WorkerError;
 pub use init::InitMode;
+pub use ramseynet_worker_api::{WorkerCommand, WorkerEvent};
 
 pub const WORKER_VERSION: &str = "0.2.0";
 

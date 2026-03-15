@@ -22,10 +22,10 @@ Other commands: `clippy`, `build`, `web` (production build), `bench` (criterion 
 ./run search --k 3 --ell 3 --n 5                     # all strategies, default server
 ./run search --k 3 --ell 3 --n 5 --strategy greedy
 ./run search --k 3 --ell 4 --n 8 --server http://remote:3001 --max-iters 50000
-./run search --k 4 --ell 4 --n 17 --offline --viz-port 8080  # no server needed
+./run search --k 4 --ell 4 --n 17 --offline --port 8080  # no server needed
 ```
 
-Options: `--strategy {greedy|local|annealing|tree|all}`, `--init {perturbed-paley|paley|random|balanced|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--tabu-tenure N`, `--initial-temp F`, `--cooling-rate F`, `--beam-width N`, `--max-depth N`, `--viz-port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`.
+Options: `--strategy {tree|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`.
 
 **Discovery submission:** All valid graphs found during search (not just the final result) are collected in a bounded, score-sorted buffer (default 1,000, configurable via `--collector-capacity`) and submitted to the server. This is especially useful for tree/beam search which discovers many valid graphs per run.
 

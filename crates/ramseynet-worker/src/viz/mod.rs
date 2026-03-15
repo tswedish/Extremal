@@ -1,6 +1,6 @@
 //! Live search visualization via embedded web server.
 //!
-//! When `--viz-port` is set, an axum server streams search snapshots
+//! When `--port` is set, an axum server streams search snapshots
 //! to a browser over WebSocket at ~20fps. Valid graphs are scored and
 //! ranked in a top-N leaderboard (capacity 100 for local viz, display limit selectable in UI).
 
@@ -124,6 +124,12 @@ pub enum VizMessage {
     Snapshot(SearchSnapshot),
     #[serde(rename = "leaderboard")]
     Leaderboard { entries: Vec<LeaderboardEntry> },
+    #[serde(rename = "status")]
+    Status(ramseynet_worker_api::WorkerStatus),
+    #[serde(rename = "error")]
+    Error { message: String },
+    #[serde(rename = "strategies")]
+    Strategies { strategies: Vec<ramseynet_worker_api::StrategyInfo> },
 }
 
 /// Handle that search threads use to push updates to the viz server.

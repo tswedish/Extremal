@@ -357,6 +357,162 @@ header h1 {
   background: #6366f1;
   transition: width 0.1s linear;
 }
+
+/* ── Control panel ──────────────────────────────────── */
+.control-panel {
+  background: #0e0e16;
+  border-bottom: 1px solid #1a1a2a;
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+  max-height: 200px;
+}
+.control-panel.collapsed {
+  max-height: 28px;
+}
+.control-panel.collapsed .control-body {
+  display: none;
+}
+.control-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 20px;
+  height: 28px;
+}
+.control-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #666680;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.state-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.state-dot.idle { background: #8888a0; }
+.state-dot.searching { background: #22c55e; animation: pulse-dot 1.5s ease-in-out infinite; }
+.state-dot.paused { background: #f59e0b; }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.state-label {
+  font-size: 10px;
+  color: #8888a0;
+  text-transform: uppercase;
+}
+.control-buttons {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ctrl-btn {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid #2a2a3a;
+  transition: all 0.15s;
+}
+.ctrl-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.ctrl-btn.start {
+  background: #166534;
+  border-color: #22c55e;
+  color: #22c55e;
+}
+.ctrl-btn.start:hover:not(:disabled) { background: #15803d; }
+.ctrl-btn.pause {
+  background: #78350f;
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+.ctrl-btn.pause:hover:not(:disabled) { background: #92400e; }
+.ctrl-btn.resume {
+  background: #1e3a5f;
+  border-color: #6366f1;
+  color: #6366f1;
+}
+.ctrl-btn.resume:hover:not(:disabled) { background: #1e40af; }
+.ctrl-btn.stop {
+  background: #450a0a;
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.ctrl-btn.stop:hover:not(:disabled) { background: #7f1d1d; }
+.control-toggle {
+  background: none;
+  border: 1px solid #2a2a3a;
+  color: #8888a0;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-left: 8px;
+}
+.control-toggle:hover { border-color: #4a4a6a; color: #e0e0e8; }
+.control-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 20px 10px 20px;
+  align-items: end;
+}
+.ctrl-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ctrl-group label {
+  font-size: 10px;
+  color: #666680;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.ctrl-group input, .ctrl-group select {
+  background: #141420;
+  border: 1px solid #2a2a3a;
+  color: #e0e0e8;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  width: 80px;
+}
+.ctrl-group input:disabled, .ctrl-group select:disabled {
+  opacity: 0.4;
+  color: #666680;
+}
+.ctrl-group input:focus, .ctrl-group select:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+.ctrl-group select { width: auto; min-width: 80px; }
+.ctrl-group input[type="checkbox"] {
+  width: auto;
+  margin: 4px 0;
+}
+.ctrl-separator {
+  width: 1px;
+  height: 32px;
+  background: #2a2a3a;
+  margin: 0 4px;
+}
+.strategy-params {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 </style>
 </head>
 <body>
@@ -366,6 +522,70 @@ header h1 {
   <span class="status-text" id="status-text">connecting...</span>
 </header>
 <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+<div class="control-panel" id="control-panel">
+  <div class="control-header">
+    <span class="control-title">
+      <span class="state-dot idle" id="state-dot"></span>
+      <span class="state-label" id="state-label">idle</span>
+      Controls
+    </span>
+    <div class="control-buttons">
+      <button class="ctrl-btn start" id="btn-start" onclick="cmdStart()">Start</button>
+      <button class="ctrl-btn pause" id="btn-pause" onclick="cmdPause()" disabled>Pause</button>
+      <button class="ctrl-btn resume" id="btn-resume" onclick="cmdResume()" style="display:none">Resume</button>
+      <button class="ctrl-btn stop" id="btn-stop" onclick="cmdStop()" disabled>Stop</button>
+      <button class="control-toggle" id="control-toggle" onclick="toggleControls()">_</button>
+    </div>
+  </div>
+  <div class="control-body" id="control-body">
+    <div class="ctrl-group">
+      <label>k</label>
+      <input type="number" id="ctrl-k" value="4" min="2" max="10">
+    </div>
+    <div class="ctrl-group">
+      <label>ell</label>
+      <input type="number" id="ctrl-ell" value="4" min="2" max="10">
+    </div>
+    <div class="ctrl-group">
+      <label>n</label>
+      <input type="number" id="ctrl-n" value="17" min="3" max="100">
+    </div>
+    <div class="ctrl-separator"></div>
+    <div class="ctrl-group">
+      <label>Init</label>
+      <select id="ctrl-init">
+        <option value="perturbed-paley" selected>Perturbed Paley</option>
+        <option value="paley">Paley</option>
+        <option value="random">Random</option>
+        <option value="leaderboard">Leaderboard</option>
+      </select>
+    </div>
+    <div class="ctrl-group">
+      <label>Strategy</label>
+      <select id="ctrl-strategy"></select>
+    </div>
+    <div class="ctrl-separator"></div>
+    <div class="ctrl-group">
+      <label>Max Iters</label>
+      <input type="number" id="ctrl-max-iters" value="100000" min="100" step="10000">
+    </div>
+    <div class="ctrl-group">
+      <label>Bias</label>
+      <input type="number" id="ctrl-bias" value="0.5" min="0" max="1" step="0.1">
+    </div>
+    <div class="ctrl-separator"></div>
+    <div id="strategy-params" class="strategy-params"></div>
+    <div class="ctrl-separator"></div>
+    <div class="ctrl-group">
+      <label>Offline</label>
+      <input type="checkbox" id="ctrl-offline">
+    </div>
+    <div class="ctrl-group">
+      <label>No Backoff</label>
+      <input type="checkbox" id="ctrl-no-backoff">
+    </div>
+  </div>
+</div>
 <div class="stats-bar" id="stats-bar">
   <div class="stat"><span class="stat-label">Strategy</span><span class="stat-value" id="s-strategy">--</span></div>
   <div class="stat"><span class="stat-label">n</span><span class="stat-value highlight" id="s-n">--</span></div>
@@ -812,6 +1032,12 @@ function connect() {
       handleLeaderboard(msg);
     } else if (msg.type === 'hello') {
       statusText.textContent = 'connected (v' + msg.version + ')';
+    } else if (msg.type === 'status') {
+      handleStatus(msg);
+    } else if (msg.type === 'strategies') {
+      handleStrategies(msg);
+    } else if (msg.type === 'error') {
+      console.warn('Worker error:', msg.message);
     }
   };
 }
@@ -1043,6 +1269,163 @@ function updateFoundAgo() {
 }
 
 setInterval(updateFoundAgo, 1000);
+
+// ── Control Panel ──────────────────────────────────────
+let workerState = 'idle';
+let strategySchemas = []; // [{id, name, params: [{name, label, param_type, default}]}]
+
+function handleStatus(msg) {
+  workerState = msg.state || 'idle';
+  updateControlState();
+
+  // Update control inputs to reflect current config (if searching)
+  if (msg.k != null) $('ctrl-k').value = msg.k;
+  if (msg.ell != null) $('ctrl-ell').value = msg.ell;
+  if (msg.n != null) $('ctrl-n').value = msg.n;
+
+  // Auto-collapse controls when searching, expand when idle
+  var panel = $('control-panel');
+  if (workerState === 'idle' || workerState === 'paused') {
+    panel.classList.remove('collapsed');
+    $('control-toggle').textContent = '_';
+  } else if (workerState === 'searching') {
+    panel.classList.add('collapsed');
+    $('control-toggle').textContent = '+';
+  }
+}
+
+function handleStrategies(msg) {
+  strategySchemas = msg.strategies || [];
+  const sel = $('ctrl-strategy');
+  sel.innerHTML = '';
+  strategySchemas.forEach(function(s) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    sel.appendChild(opt);
+  });
+  // Render config params for the first strategy
+  if (strategySchemas.length > 0) {
+    renderStrategyParams(strategySchemas[0]);
+  }
+  sel.onchange = function() {
+    const schema = strategySchemas.find(function(s) { return s.id === sel.value; });
+    if (schema) renderStrategyParams(schema);
+  };
+}
+
+function renderStrategyParams(schema) {
+  const container = $('strategy-params');
+  container.innerHTML = '';
+  schema.params.forEach(function(p) {
+    const group = document.createElement('div');
+    group.className = 'ctrl-group';
+    const label = document.createElement('label');
+    label.textContent = p.label;
+    group.appendChild(label);
+
+    var input;
+    if (p.param_type.type === 'bool') {
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = !!p.default;
+    } else {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.value = p.default;
+      if (p.param_type.min != null) input.min = p.param_type.min;
+      if (p.param_type.max != null) input.max = p.param_type.max;
+      if (p.param_type.type === 'float') input.step = 0.1;
+    }
+    input.id = 'sp-' + p.name;
+    input.title = p.description;
+    input.disabled = (workerState !== 'idle');
+    group.appendChild(input);
+    container.appendChild(group);
+  });
+}
+
+function updateControlState() {
+  const dot = $('state-dot');
+  const label = $('state-label');
+  const btnStart = $('btn-start');
+  const btnPause = $('btn-pause');
+  const btnResume = $('btn-resume');
+  const btnStop = $('btn-stop');
+
+  dot.className = 'state-dot ' + workerState;
+  label.textContent = workerState;
+
+  const idle = workerState === 'idle';
+  const searching = workerState === 'searching';
+  const paused = workerState === 'paused';
+
+  btnStart.style.display = idle ? '' : 'none';
+  btnStart.disabled = !idle;
+  btnPause.style.display = searching ? '' : 'none';
+  btnPause.disabled = !searching;
+  btnResume.style.display = paused ? '' : 'none';
+  btnResume.disabled = !paused;
+  btnStop.style.display = (searching || paused) ? '' : 'none';
+  btnStop.disabled = !(searching || paused);
+
+  // Disable config inputs when not idle
+  var inputs = document.querySelectorAll('.control-body input, .control-body select');
+  inputs.forEach(function(el) { el.disabled = !idle; });
+}
+
+function sendCommand(cmd) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(cmd));
+  }
+}
+
+function cmdStart() {
+  const strategyId = $('ctrl-strategy').value;
+  const schema = strategySchemas.find(function(s) { return s.id === strategyId; });
+
+  // Collect strategy-specific params
+  var stratConfig = {};
+  if (schema) {
+    schema.params.forEach(function(p) {
+      const el = $('sp-' + p.name);
+      if (!el) return;
+      if (p.param_type.type === 'bool') {
+        stratConfig[p.name] = el.checked;
+      } else if (p.param_type.type === 'int') {
+        stratConfig[p.name] = parseInt(el.value, 10);
+      } else {
+        stratConfig[p.name] = parseFloat(el.value);
+      }
+    });
+  }
+
+  sendCommand({
+    type: 'start',
+    k: parseInt($('ctrl-k').value, 10),
+    ell: parseInt($('ctrl-ell').value, 10),
+    n: parseInt($('ctrl-n').value, 10),
+    config: {
+      strategy: strategyId || undefined,
+      init_mode: $('ctrl-init').value,
+      max_iters: parseInt($('ctrl-max-iters').value, 10),
+      sample_bias: parseFloat($('ctrl-bias').value),
+      offline: $('ctrl-offline').checked,
+      no_backoff: $('ctrl-no-backoff').checked,
+      strategy_config: stratConfig,
+    }
+  });
+}
+
+function cmdPause() { sendCommand({type: 'pause'}); }
+function cmdResume() { sendCommand({type: 'resume'}); }
+function cmdStop() { sendCommand({type: 'stop'}); }
+
+function toggleControls() {
+  var panel = $('control-panel');
+  panel.classList.toggle('collapsed');
+  $('control-toggle').textContent = panel.classList.contains('collapsed') ? '+' : '_';
+}
 
 // Init
 initChart();
