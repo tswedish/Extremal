@@ -87,15 +87,23 @@ impl AdmissionThreshold {
     }
 }
 
-/// Known CID set for cross-round deduplication.
+/// Server CID set — tracks CIDs known to be on the server leaderboard.
+/// Used solely to avoid re-submitting graphs the server already has.
+/// Capped at the server's reported leaderboard capacity.
 #[derive(Clone, Default)]
-pub struct KnownCids {
+pub struct ServerCids {
     inner: std::collections::HashSet<GraphCid>,
+    cap: usize,
 }
 
-impl KnownCids {
+impl ServerCids {
     pub fn new() -> Self {
-        Self::default()
+        Self { inner: std::collections::HashSet::new(), cap: 10_000 }
+    }
+
+    /// Update the cap to match the server's reported leaderboard capacity.
+    pub fn set_cap(&mut self, cap: u32) {
+        self.cap = cap as usize;
     }
 
     pub fn add_from_hex(&mut self, cids: &[String]) {
@@ -104,15 +112,17 @@ impl KnownCids {
                 self.inner.insert(cid);
             }
         }
+        self.trim_if_needed();
     }
 
     pub fn insert(&mut self, cid: GraphCid) {
         self.inner.insert(cid);
+        self.trim_if_needed();
     }
 
     pub fn insert_hex(&mut self, hex: &str) {
         if let Ok(cid) = GraphCid::from_hex(hex) {
-            self.inner.insert(cid);
+            self.insert(cid);
         }
     }
 
@@ -128,16 +138,31 @@ impl KnownCids {
         self.inner.is_empty()
     }
 
-    pub fn snapshot_trimmed(&self, max: usize) -> std::collections::HashSet<GraphCid> {
-        if self.inner.len() <= max {
-            self.inner.clone()
-        } else {
-            self.inner.iter().take(max).cloned().collect()
-        }
+    /// Snapshot for passing to strategies. Strategies use this to avoid
+    /// re-exploring graphs already on the server leaderboard.
+    pub fn snapshot(&self) -> std::collections::HashSet<GraphCid> {
+        self.inner.clone()
     }
 
     pub fn clear(&mut self) {
         self.inner.clear();
+    }
+
+    fn trim_if_needed(&mut self) {
+        if self.cap > 0 && self.inner.len() > self.cap * 2 {
+            // Drop roughly half (arbitrary entries — order doesn't matter
+            // since the next CID sync will repopulate from server)
+            let keep = self.cap;
+            let to_remove: Vec<GraphCid> = self.inner.iter().skip(keep).cloned().collect();
+            for cid in &to_remove {
+                self.inner.remove(cid);
+            }
+            tracing::debug!(
+                dropped = to_remove.len(),
+                remaining = self.inner.len(),
+                "trimmed server CID cache"
+            );
+        }
     }
 }
 
@@ -149,17 +174,40 @@ struct LocalDiscovery {
     cid: GraphCid,
 }
 
-/// Shared buffer for mid-search discovery streaming.
-/// The observer pushes raw discoveries; the engine drains periodically.
-type DiscoveryBuffer = Arc<std::sync::Mutex<Vec<ramseynet_worker_api::RawDiscovery>>>;
+/// Discovery buffer shared between observer (push) and engine (drain).
+/// Drained every few seconds during search so it stays small.
+struct DiscoveryBuffer {
+    items: std::sync::Mutex<Vec<ramseynet_worker_api::RawDiscovery>>,
+}
+
+impl DiscoveryBuffer {
+    fn new() -> Self {
+        Self {
+            items: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn push(&self, discovery: ramseynet_worker_api::RawDiscovery) {
+        let mut buf = self.items.lock().expect("discovery buffer lock poisoned");
+        buf.push(discovery);
+    }
+
+    fn drain(&self) -> Vec<ramseynet_worker_api::RawDiscovery> {
+        let mut buf = self.items.lock().expect("discovery buffer lock poisoned");
+        std::mem::take(&mut *buf)
+    }
+
+    fn len(&self) -> usize {
+        self.items.lock().expect("discovery buffer lock poisoned").len()
+    }
+}
 
 /// Observer that forwards progress to the viz bridge, streams discoveries
-/// to a shared buffer, and handles cancellation.
+/// to a bounded buffer, and handles cancellation.
 struct EngineObserver {
     cancelled: Arc<AtomicBool>,
     viz: Option<Arc<dyn VizBridge>>,
-    /// Shared buffer — observer pushes, engine drains every ~30s.
-    discovery_buffer: DiscoveryBuffer,
+    discovery_buffer: Arc<DiscoveryBuffer>,
 }
 
 impl SearchObserver for EngineObserver {
@@ -170,8 +218,7 @@ impl SearchObserver for EngineObserver {
     }
 
     fn on_discovery(&self, discovery: &ramseynet_worker_api::RawDiscovery) {
-        let mut buf = self.discovery_buffer.lock().unwrap();
-        buf.push(discovery.clone());
+        self.discovery_buffer.push(discovery.clone());
     }
 
     fn is_cancelled(&self) -> bool {
@@ -198,7 +245,7 @@ pub async fn run_engine(
         let mut state = WorkerState::Idle;
         let mut config: Option<EngineConfig> = None;
         let mut client: Option<ServerClient> = None;
-        let mut known = KnownCids::new();
+        let mut server_cids = ServerCids::new();
         let mut threshold = AdmissionThreshold::open();
         let mut cid_sync_cursor: Option<String> = None;
         let mut leaderboard_total: u32 = 0;
@@ -290,7 +337,7 @@ pub async fn run_engine(
                                         strategies.first().map(|s| s.id().to_string())
                                     });
                                     // Clear state for new search
-                                    known.clear();
+                                    server_cids.clear();
                                     local_pool.clear();
                                     threshold = AdmissionThreshold::open();
                                     cid_sync_cursor = None;
@@ -301,18 +348,18 @@ pub async fn run_engine(
                                     metrics = WorkerMetrics::default();
                                     config = Some(cfg);
                                     state = WorkerState::Searching;
-                                    metrics.known_cids_count = known.len();
+                                    metrics.known_cids_count = server_cids.len();
                                     metrics.local_pool_size = local_pool.len();
                                     send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                                 }
                                 WorkerCommand::Status => {
-                                    metrics.known_cids_count = known.len();
+                                    metrics.known_cids_count = server_cids.len();
                                     metrics.local_pool_size = local_pool.len();
                                     send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                                 }
                                 WorkerCommand::ClearKnownCids => {
-                                    info!(prev = known.len(), "clearing known CIDs cache");
-                                    known.clear();
+                                    info!(prev = server_cids.len(), "clearing server CID cache");
+                                    server_cids.clear();
                                     metrics.known_cids_count = 0;
                                 }
                                 WorkerCommand::ClearLocalPool => {
@@ -350,13 +397,13 @@ pub async fn run_engine(
                                     send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                                 }
                                 WorkerCommand::Status => {
-                                    metrics.known_cids_count = known.len();
+                                    metrics.known_cids_count = server_cids.len();
                                     metrics.local_pool_size = local_pool.len();
                                     send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                                 }
                                 WorkerCommand::ClearKnownCids => {
-                                    info!(prev = known.len(), "clearing known CIDs cache");
-                                    known.clear();
+                                    info!(prev = server_cids.len(), "clearing server CID cache");
+                                    server_cids.clear();
                                     metrics.known_cids_count = 0;
                                 }
                                 WorkerCommand::ClearLocalPool => {
@@ -401,13 +448,13 @@ pub async fn run_engine(
                                 send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                             }
                             WorkerCommand::Status => {
-                                metrics.known_cids_count = known.len();
+                                metrics.known_cids_count = server_cids.len();
                                 metrics.local_pool_size = local_pool.len();
                                 send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                             }
-                            WorkerCommand::ClearKnownCids => {
-                                info!(prev = known.len(), "clearing known CIDs cache");
-                                known.clear();
+                                WorkerCommand::ClearKnownCids => {
+                                    info!(prev = server_cids.len(), "clearing server CID cache");
+                                    server_cids.clear();
                                 metrics.known_cids_count = 0;
                             }
                             WorkerCommand::ClearLocalPool => {
@@ -437,7 +484,10 @@ pub async fn run_engine(
                                     "fetched leaderboard threshold"
                                 );
                                 leaderboard_total = resp.entry_count;
+                                server_cids.set_cap(resp.capacity);
                                 threshold = AdmissionThreshold::from_response(&resp);
+                                metrics.server_connected = true;
+                                metrics.leaderboard_total = leaderboard_total;
                             }
                             Err(e) => warn!("failed to fetch threshold: {e}"),
                         }
@@ -448,13 +498,13 @@ pub async fn run_engine(
                         {
                             Ok(resp) => {
                                 if !resp.cids.is_empty() {
-                                    known.add_from_hex(&resp.cids);
+                                    server_cids.add_from_hex(&resp.cids);
                                 }
                                 if let Some(ref ts) = resp.last_updated {
                                     cid_sync_cursor = Some(ts.clone());
                                 }
                                 info!(
-                                    known = known.len(), new_cids = resp.cids.len(),
+                                    server_cids = server_cids.len(), new_cids = resp.cids.len(),
                                     total = resp.total, "synced leaderboard CIDs"
                                 );
                             }
@@ -522,7 +572,7 @@ pub async fn run_engine(
                         seed: rng.gen(),
                         init_graph: Some(seed_graph),
                         config: cfg.strategy_config.clone(),
-                        known_cids: known.snapshot_trimmed(cfg.max_known_cids),
+                        known_cids: server_cids.snapshot(),
                         max_known_cids: cfg.max_known_cids,
                     };
 
@@ -530,8 +580,7 @@ pub async fn run_engine(
                     let cancel_for_search = cancel_flag.clone();
                     let strategy_clone = Arc::clone(&strategy);
                     let viz_for_observer = viz.clone();
-                    let discovery_buffer: DiscoveryBuffer =
-                        Arc::new(std::sync::Mutex::new(Vec::new()));
+                    let discovery_buffer = Arc::new(DiscoveryBuffer::new());
                     let buffer_for_search = Arc::clone(&discovery_buffer);
 
                     let mut search_handle = tokio::task::spawn_blocking(move || {
@@ -543,11 +592,15 @@ pub async fn run_engine(
                         strategy_clone.search(&job, &observer)
                     });
 
-                    // Wait for search, handling commands, shutdown, and periodic submission
-                    let submit_interval = Duration::from_secs(30);
+                    // Per-round dedup set — tracks CIDs scored this round to avoid
+                    // re-scoring the same canonical graph in subsequent drains.
+                    let mut round_scored_cids: std::collections::HashSet<GraphCid> = std::collections::HashSet::new();
+
+                    // Wait for search, handling commands, shutdown, and periodic scoring
+                    let drain_interval = Duration::from_secs(5);
                     let mut search_cancelled = false;
-                    let mut submit_timer = tokio::time::interval(submit_interval);
-                    submit_timer.tick().await; // skip immediate first tick
+                    let mut drain_timer = tokio::time::interval(drain_interval);
+                    drain_timer.tick().await; // skip immediate first tick
 
                     let result = loop {
                         tokio::select! {
@@ -591,25 +644,38 @@ pub async fn run_engine(
                                     search_cancelled = true;
                                 }
                             }
-                            // Periodic mid-search submission (every 30s)
-                            _ = submit_timer.tick() => {
-                                let drained: Vec<ramseynet_worker_api::RawDiscovery> = {
-                                    let mut buf = discovery_buffer.lock().unwrap();
-                                    std::mem::take(&mut *buf)
-                                };
+                            // Periodic drain: score discoveries and submit (every 5s)
+                            _ = drain_timer.tick() => {
+                                let drained = discovery_buffer.drain();
                                 if !drained.is_empty() {
-                                    let batch = score_and_dedup(
-                                        &drained, &mut known, viz.as_ref(),
-                                        target_n, &strategy_id,
-                                    );
+                                    let viz_for_scoring = viz.clone();
+                                    let strategy_id_for_scoring = strategy_id.clone();
+                                    let mut dedup_snapshot = round_scored_cids.clone();
+                                    let batch = tokio::task::spawn_blocking(move || {
+                                        score_and_dedup_with_set(
+                                            &drained, &mut dedup_snapshot, viz_for_scoring.as_ref(),
+                                            target_n, &strategy_id_for_scoring,
+                                        )
+                                    }).await.unwrap_or_default();
+                                    // Merge dedup CIDs back
+                                    for d in &batch {
+                                        round_scored_cids.insert(d.cid.clone());
+                                    }
+                                    metrics.total_discoveries += batch.len() as u64;
+                                    metrics.discovery_buffer_size = discovery_buffer.len();
                                     feed_local_pool(&batch, &mut local_pool, local_pool_capacity, use_server_pool);
                                     if is_online && !batch.is_empty() {
                                         let cl = client.as_ref().unwrap();
                                         let (submitted, admitted, skipped) = submit_batch(
-                                            cl, &batch, &threshold, &mut known,
+                                            cl, &batch, &threshold, &mut server_cids,
                                             k, ell, target_n,
                                         ).await;
-                                        info!(submitted, admitted, skipped, "periodic submission batch");
+                                        metrics.total_submitted += submitted as u64;
+                                        metrics.total_admitted += admitted as u64;
+                                        metrics.total_skipped += skipped as u64;
+                                        if submitted > 0 || skipped > 0 {
+                                            info!(submitted, admitted, skipped, "periodic submission batch");
+                                        }
                                     }
                                 }
                             }
@@ -638,33 +704,29 @@ pub async fn run_engine(
                         continue;
                     }
 
-                    // ── Final batch: drain any remaining buffered discoveries + result ──
-                    let remaining: Vec<ramseynet_worker_api::RawDiscovery> = {
-                        let mut buf = discovery_buffer.lock().unwrap();
-                        std::mem::take(&mut *buf)
-                    };
-                    // Combine buffered (not yet processed) with any in result.discoveries
-                    // that weren't streamed (e.g., the final best graph)
-                    let mut final_raws = remaining;
-                    if result.valid {
-                        if let Some(ref best) = result.best_graph {
-                            final_raws.push(ramseynet_worker_api::RawDiscovery {
-                                graph: best.clone(),
-                                iteration: result.iterations_used,
-                            });
-                        }
-                    }
+                    // ── Final drain: score any remaining buffered discoveries ──
+                    let final_raws = discovery_buffer.drain();
 
                     let score_start = Instant::now();
-                    let scored = score_and_dedup(
-                        &final_raws, &mut known, viz.as_ref(),
-                        target_n, &strategy_id,
-                    );
+                    let scored = if !final_raws.is_empty() {
+                        let viz_for_scoring = viz.clone();
+                        let strategy_id_for_scoring = strategy_id.clone();
+                        let mut dedup_snapshot = round_scored_cids;
+                        let batch = tokio::task::spawn_blocking(move || {
+                            score_and_dedup_with_set(
+                                &final_raws, &mut dedup_snapshot, viz_for_scoring.as_ref(),
+                                target_n, &strategy_id_for_scoring,
+                            )
+                        }).await.unwrap_or_default();
+                        metrics.total_discoveries += batch.len() as u64;
+                        batch
+                    } else {
+                        Vec::new()
+                    };
                     feed_local_pool(&scored, &mut local_pool, local_pool_capacity, use_server_pool);
                     metrics.last_scoring_ms = score_start.elapsed().as_millis() as u64;
-                    metrics.total_discoveries += scored.len() as u64;
                     metrics.last_round_ms = elapsed.as_millis() as u64;
-                    metrics.known_cids_count = known.len();
+                    metrics.known_cids_count = server_cids.len();
                     metrics.local_pool_size = local_pool.len();
                     metrics.leaderboard_total = leaderboard_total;
                     metrics.server_connected = is_online;
@@ -687,7 +749,7 @@ pub async fn run_engine(
                         let submit_start = Instant::now();
                         let cl = client.as_ref().unwrap();
                         let (submitted, admitted, skipped) = submit_batch(
-                            cl, &scored, &threshold, &mut known, k, ell, target_n,
+                            cl, &scored, &threshold, &mut server_cids, k, ell, target_n,
                         ).await;
                         metrics.last_submit_ms = submit_start.elapsed().as_millis() as u64;
                         metrics.total_submitted += submitted as u64;
@@ -730,9 +792,12 @@ pub async fn run_engine(
     }
 
 /// Score raw discoveries, deduplicate by canonical CID, and forward to viz.
-fn score_and_dedup(
+///
+/// Uses a per-round `seen` set to avoid re-scoring the same canonical graph.
+/// This is separate from `ServerCids` which tracks server-side dedup.
+fn score_and_dedup_with_set(
     raws: &[ramseynet_worker_api::RawDiscovery],
-    known: &mut KnownCids,
+    seen: &mut std::collections::HashSet<GraphCid>,
     viz: Option<&Arc<dyn VizBridge>>,
     target_n: u32,
     strategy_id: &str,
@@ -741,10 +806,9 @@ fn score_and_dedup(
     for raw in raws {
         let sr = compute_score_canonical(&raw.graph);
         let canonical_cid = compute_cid(&sr.canonical_graph);
-        if known.contains(&canonical_cid) {
-            continue;
+        if !seen.insert(canonical_cid.clone()) {
+            continue; // already scored this round
         }
-        known.insert(canonical_cid.clone());
         if let Some(v) = viz {
             v.on_discovery(
                 &sr.canonical_graph,
@@ -808,7 +872,7 @@ async fn submit_batch(
     client: &ServerClient,
     scored: &[LocalDiscovery],
     threshold: &AdmissionThreshold,
-    known: &mut KnownCids,
+    server_cids: &mut ServerCids,
     k: u32,
     ell: u32,
     n: u32,
@@ -818,6 +882,11 @@ async fn submit_batch(
     let mut skipped = 0usize;
 
     for discovery in scored {
+        // Skip if already known to be on the server
+        if server_cids.contains(&discovery.cid) {
+            skipped += 1;
+            continue;
+        }
         if !threshold.would_admit(&discovery.score) {
             debug!(
                 graph_cid = %discovery.cid.to_hex(),
@@ -834,7 +903,7 @@ async fn submit_batch(
                     graph_cid = %resp.graph_cid, verdict = %resp.verdict,
                     admitted = was_admitted, rank = ?resp.rank, "submitted graph"
                 );
-                known.insert_hex(&resp.graph_cid);
+                server_cids.insert_hex(&resp.graph_cid);
                 submitted += 1;
                 if was_admitted {
                     admitted += 1;
@@ -941,59 +1010,66 @@ mod tests {
         assert_eq!(score.aut_order, 120.0);
     }
 
-    // ── KnownCids tests ─────────────────────────────────
+    // ── ServerCids tests ──────────────────────────────────
 
     #[test]
-    fn known_cids_basic_operations() {
-        let mut known = KnownCids::new();
-        assert!(known.is_empty());
+    fn server_cids_basic_operations() {
+        let mut cids = ServerCids::new();
+        assert!(cids.is_empty());
 
         let cid = test_cid(0x01);
-        known.insert(cid.clone());
-        assert_eq!(known.len(), 1);
-        assert!(known.contains(&cid));
-        assert!(!known.contains(&test_cid(0x02)));
+        cids.insert(cid.clone());
+        assert_eq!(cids.len(), 1);
+        assert!(cids.contains(&cid));
+        assert!(!cids.contains(&test_cid(0x02)));
     }
 
     #[test]
-    fn known_cids_snapshot_trimmed() {
-        let mut known = KnownCids::new();
+    fn server_cids_snapshot() {
+        let mut cids = ServerCids::new();
         for i in 0..20u8 {
-            known.insert(test_cid(i));
+            cids.insert(test_cid(i));
         }
-        assert_eq!(known.len(), 20);
-
-        let trimmed = known.snapshot_trimmed(10);
-        assert_eq!(trimmed.len(), 10);
-
-        let full = known.snapshot_trimmed(100);
-        assert_eq!(full.len(), 20);
+        assert_eq!(cids.len(), 20);
+        let snap = cids.snapshot();
+        assert_eq!(snap.len(), 20);
     }
 
     #[test]
-    fn known_cids_add_from_hex() {
-        let mut known = KnownCids::new();
+    fn server_cids_add_from_hex() {
+        let mut cids = ServerCids::new();
         let hex = test_cid(0x42).to_hex();
-        known.add_from_hex(std::slice::from_ref(&hex));
-        assert_eq!(known.len(), 1);
+        cids.add_from_hex(std::slice::from_ref(&hex));
+        assert_eq!(cids.len(), 1);
 
         // Adding same hex again should not duplicate
-        known.add_from_hex(std::slice::from_ref(&hex));
-        assert_eq!(known.len(), 1);
+        cids.add_from_hex(std::slice::from_ref(&hex));
+        assert_eq!(cids.len(), 1);
 
         // Invalid hex should be ignored
-        known.add_from_hex(&["not_valid_hex".to_string()]);
-        assert_eq!(known.len(), 1);
+        cids.add_from_hex(&["not_valid_hex".to_string()]);
+        assert_eq!(cids.len(), 1);
     }
 
     #[test]
-    fn known_cids_clear() {
-        let mut known = KnownCids::new();
-        known.insert(test_cid(0x01));
-        known.insert(test_cid(0x02));
-        assert_eq!(known.len(), 2);
-        known.clear();
-        assert!(known.is_empty());
+    fn server_cids_clear() {
+        let mut cids = ServerCids::new();
+        cids.insert(test_cid(0x01));
+        cids.insert(test_cid(0x02));
+        assert_eq!(cids.len(), 2);
+        cids.clear();
+        assert!(cids.is_empty());
+    }
+
+    #[test]
+    fn server_cids_trim_at_cap() {
+        let mut cids = ServerCids::new();
+        cids.set_cap(10); // cap at 10, trim triggers at 2*cap = 20
+        for i in 0..25u8 {
+            cids.insert(test_cid(i));
+        }
+        // Should have trimmed to ~10 entries
+        assert!(cids.len() <= 15, "should trim, got {}", cids.len());
     }
 
     // ── feed_local_pool tests ────────────────────────────

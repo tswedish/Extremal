@@ -425,6 +425,15 @@ header h1 {
   opacity: 0.3;
   cursor: not-allowed;
 }
+.ctrl-btn.pending {
+  opacity: 0.7;
+  cursor: wait;
+  animation: pulse-btn 1s ease-in-out infinite;
+}
+@keyframes pulse-btn {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.9; }
+}
 .ctrl-btn.start {
   background: #166534;
   border-color: #22c55e;
@@ -542,17 +551,7 @@ header h1 {
   height: 14px;
   background: #2a2a3a;
 }
-.clear-btn {
-  background: #1a1a2a;
-  border: 1px solid #2a2a3a;
-  color: #8888a0;
-  font-size: 9px;
-  font-family: inherit;
-  padding: 1px 6px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-.clear-btn:hover { border-color: #ef4444; color: #ef4444; }
+
 </style>
 </head>
 <body>
@@ -633,8 +632,8 @@ header h1 {
   <span class="metric">Submitted: <span class="metric-val" id="m-submitted">0</span></span>
   <span class="metric">Admitted: <span class="metric-val" id="m-admitted">0</span></span>
   <span class="metric-sep"></span>
-  <span class="metric">CID Cache: <span class="metric-val" id="m-known">0</span> <button class="clear-btn" onclick="sendCommand({type:'clear_known_cids'})" title="Clear CID dedup cache">clear</button></span>
-  <span class="metric">Local Pool: <span class="metric-val" id="m-pool">0</span> <button class="clear-btn" onclick="sendCommand({type:'clear_local_pool'})" title="Clear local discovery pool">clear</button></span>
+  <span class="metric">CID Cache: <span class="metric-val" id="m-known">0</span></span>
+  <span class="metric">Local Pool: <span class="metric-val" id="m-pool">0</span></span>
   <span class="metric-sep"></span>
   <span class="metric">Last round: <span class="metric-val" id="m-round-ms">--</span>ms</span>
   <span class="metric">Score: <span class="metric-val" id="m-score-ms">--</span>ms</span>
@@ -1425,6 +1424,9 @@ function renderStrategyParams(schema) {
   });
 }
 
+// Tracks pending action — set when button is clicked, cleared when state changes
+var pendingAction = null; // null | 'pausing' | 'stopping'
+
 function updateControlState() {
   const dot = $('state-dot');
   const label = $('state-label');
@@ -1433,21 +1435,40 @@ function updateControlState() {
   const btnResume = $('btn-resume');
   const btnStop = $('btn-stop');
 
-  dot.className = 'state-dot ' + workerState;
-  label.textContent = workerState;
+  // Clear pending if the state actually changed to what we expected
+  if (pendingAction === 'pausing' && workerState === 'paused') pendingAction = null;
+  if (pendingAction === 'stopping' && workerState === 'idle') pendingAction = null;
+  // Also clear if we're no longer searching (e.g., round ended naturally)
+  if (workerState === 'idle' || workerState === 'paused') pendingAction = null;
 
-  const idle = workerState === 'idle';
-  const searching = workerState === 'searching';
-  const paused = workerState === 'paused';
+  var displayState = pendingAction || workerState;
+  dot.className = 'state-dot ' + (pendingAction ? 'searching' : workerState);
+  label.textContent = displayState;
+
+  const idle = workerState === 'idle' && !pendingAction;
+  const searching = workerState === 'searching' && !pendingAction;
+  const paused = workerState === 'paused' && !pendingAction;
+  const isPending = !!pendingAction;
 
   btnStart.style.display = idle ? '' : 'none';
   btnStart.disabled = !idle;
-  btnPause.style.display = searching ? '' : 'none';
+
+  // Pause button: visible when searching (not pending)
+  btnPause.style.display = (searching || pendingAction === 'pausing') ? '' : 'none';
   btnPause.disabled = !searching;
+  btnPause.textContent = pendingAction === 'pausing' ? 'Pausing...' : 'Pause';
+  btnPause.classList.toggle('pending', pendingAction === 'pausing');
+
+  // Resume button: visible when paused
   btnResume.style.display = paused ? '' : 'none';
   btnResume.disabled = !paused;
-  btnStop.style.display = (searching || paused) ? '' : 'none';
-  btnStop.disabled = !(searching || paused);
+
+  // Stop button: visible when searching or paused (or pending stop)
+  var showStop = searching || paused || pendingAction === 'stopping' || pendingAction === 'pausing';
+  btnStop.style.display = showStop ? '' : 'none';
+  btnStop.disabled = isPending && pendingAction !== 'pausing'; // can still stop while pausing
+  btnStop.textContent = pendingAction === 'stopping' ? 'Stopping...' : 'Stop';
+  btnStop.classList.toggle('pending', pendingAction === 'stopping');
 
   // Disable config inputs when not idle
   var inputs = document.querySelectorAll('.control-body input, .control-body select');
@@ -1464,7 +1485,6 @@ function cmdStart() {
   const strategyId = $('ctrl-strategy').value;
   const schema = strategySchemas.find(function(s) { return s.id === strategyId; });
 
-  // Collect strategy-specific params
   var stratConfig = {};
   if (schema) {
     schema.params.forEach(function(p) {
@@ -1497,9 +1517,19 @@ function cmdStart() {
   });
 }
 
-function cmdPause() { sendCommand({type: 'pause'}); }
+function cmdPause() {
+  pendingAction = 'pausing';
+  updateControlState();
+  sendCommand({type: 'pause'});
+}
+
 function cmdResume() { sendCommand({type: 'resume'}); }
-function cmdStop() { sendCommand({type: 'stop'}); }
+
+function cmdStop() {
+  pendingAction = 'stopping';
+  updateControlState();
+  sendCommand({type: 'stop'});
+}
 
 function toggleControls() {
   var panel = $('control-panel');

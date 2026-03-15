@@ -114,16 +114,15 @@ impl SearchStrategy for TreeSearch {
         let mut best_invalid: Option<(AdjacencyMatrix, u64, u64, u64)> =
             Some((seed.clone(), seed_score, seed_kc, seed_ei));
         let mut iters_used: u64 = 1;
-        let mut discoveries: Vec<RawDiscovery> = Vec::new();
+        let mut discovery_count: u64 = 0;
 
         if seed_score == 0 {
             best_valid = Some(seed.clone());
-            let raw = RawDiscovery {
+            observer.on_discovery(&RawDiscovery {
                 graph: seed.clone(),
                 iteration: iters_used,
-            };
-            observer.on_discovery(&raw);
-            discoveries.push(raw);
+            });
+            discovery_count += 1;
         }
 
         observer.on_progress(&ProgressInfo {
@@ -136,7 +135,7 @@ impl SearchStrategy for TreeSearch {
             max_iters,
             valid: seed_score == 0,
             violation_score: seed_score as u32,
-            discoveries_so_far: discoveries.len() as u64,
+            discoveries_so_far: discovery_count,
             k_cliques: Some(seed_kc),
             ell_indsets: Some(seed_ei),
         });
@@ -193,12 +192,11 @@ impl SearchStrategy for TreeSearch {
 
                     if score == 0 {
                         // Valid graph found — stream to platform immediately
-                        let raw = RawDiscovery {
+                        observer.on_discovery(&RawDiscovery {
                             graph: child.clone(),
                             iteration: iters_used,
-                        };
-                        observer.on_discovery(&raw);
-                        discoveries.push(raw);
+                        });
+                        discovery_count += 1;
                         observer.on_progress(&ProgressInfo {
                             graph: child.clone(),
                             n,
@@ -209,7 +207,7 @@ impl SearchStrategy for TreeSearch {
                             max_iters,
                             valid: true,
                             violation_score: 0,
-                            discoveries_so_far: discoveries.len() as u64,
+                            discoveries_so_far: discovery_count,
                             k_cliques: Some(0),
                             ell_indsets: Some(0),
                         });
@@ -243,7 +241,7 @@ impl SearchStrategy for TreeSearch {
                             max_iters,
                             valid: best_valid.is_some(),
                             violation_score: display_score as u32,
-                            discoveries_so_far: discoveries.len() as u64,
+                            discoveries_so_far: discovery_count,
                             k_cliques: Some(display_kc),
                             ell_indsets: Some(display_ei),
                         });
@@ -267,7 +265,7 @@ impl SearchStrategy for TreeSearch {
             valid: has_valid,
             best_graph: best,
             iterations_used: iters_used,
-            discoveries,
+            discoveries: Vec::new(), // all discoveries streamed via on_discovery
         }
     }
 }
@@ -371,7 +369,8 @@ mod tests {
         );
         assert!(result.best_graph.is_some());
         assert_eq!(result.best_graph.unwrap().n(), 5);
-        assert!(!result.discoveries.is_empty());
+        // Discoveries are streamed via on_discovery, not stored in result
+        assert!(result.discoveries.is_empty());
     }
 
     #[test]
@@ -467,11 +466,10 @@ mod tests {
             observer.discovery_count() > 0,
             "on_discovery should be called when valid graphs are found"
         );
-        // Every discovery should be streamed via on_discovery
-        assert_eq!(
-            result.discoveries.len(),
-            observer.discovery_count(),
-            "result.discoveries should match on_discovery calls"
+        // result.discoveries should be empty (all streamed via on_discovery)
+        assert!(
+            result.discoveries.is_empty(),
+            "result.discoveries should be empty — all streamed via on_discovery"
         );
     }
 
