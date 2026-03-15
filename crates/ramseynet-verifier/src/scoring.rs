@@ -199,6 +199,88 @@ pub fn compute_score_with_canonical(
     )
 }
 
+/// Combined verification + scoring in a single pass.
+///
+/// Computes canonical form (nauty), verifies the graph, and scores it
+/// all with a single complement construction and shared clique data.
+/// Returns the verify result, the score (if accepted), canonical graph,
+/// and canonical CID.
+pub struct VerifyAndScoreResult {
+    pub verdict: ramseynet_types::Verdict,
+    pub reason: Option<String>,
+    pub witness: Option<Vec<u32>>,
+    pub canonical_cid: GraphCid,
+    pub canonical_graph: AdjacencyMatrix,
+    /// Score is Some only when verdict is Accepted.
+    pub score: Option<GraphScore>,
+}
+
+pub fn verify_and_score(graph: &AdjacencyMatrix, k: u32, ell: u32) -> VerifyAndScoreResult {
+    use crate::clique::{count_cliques, count_max_cliques, find_clique_witness};
+    use ramseynet_types::Verdict;
+
+    // 1. Canonical form (nauty) — single call
+    let (canonical_graph, aut_order) = canonical_form(graph);
+    let canonical_cid = ramseynet_graph::compute_cid(&canonical_graph);
+
+    // 2. Complement — constructed once, shared between verify + score
+    let comp = graph.complement();
+
+    // 3. Verify: check for k-clique in G
+    if let Some(witness) = find_clique_witness(graph, k) {
+        return VerifyAndScoreResult {
+            verdict: Verdict::Rejected,
+            reason: Some("clique_found".into()),
+            witness: Some(witness),
+            canonical_cid,
+            canonical_graph,
+            score: None,
+        };
+    }
+
+    // 4. Verify: check for ell-independent-set (ell-clique in complement)
+    if let Some(witness) = find_clique_witness(&comp, ell) {
+        return VerifyAndScoreResult {
+            verdict: Verdict::Rejected,
+            reason: Some("independent_set_found".into()),
+            witness: Some(witness),
+            canonical_cid,
+            canonical_graph,
+            score: None,
+        };
+    }
+
+    // 5. Accepted — compute full score using the already-built complement.
+    //    count_max_cliques computes omega/alpha and counts, which we already
+    //    know won't find k/ell-cliques (since verification passed), but we
+    //    need the exact max clique sizes and counts for scoring.
+    let (omega, c_omega) = count_max_cliques(graph);
+    let (alpha, c_alpha) = count_max_cliques(&comp);
+    let triangles = count_cliques(graph, 3);
+    let triangles_complement = count_cliques(&comp, 3);
+
+    let score = GraphScore::new(
+        graph.n(),
+        omega,
+        alpha,
+        c_omega,
+        c_alpha,
+        triangles,
+        triangles_complement,
+        aut_order,
+        canonical_cid.clone(),
+    );
+
+    VerifyAndScoreResult {
+        verdict: Verdict::Accepted,
+        reason: None,
+        witness: None,
+        canonical_cid,
+        canonical_graph,
+        score: Some(score),
+    }
+}
+
 /// Compute the full 4-tier score for a graph (legacy: uses provided CID).
 ///
 /// Prefer `compute_score_canonical` which derives the CID from the canonical form.

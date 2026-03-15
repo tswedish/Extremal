@@ -87,6 +87,7 @@ pub struct WorkerStatus {
     pub strategy: Option<String>,
     pub round: u64,
     pub init_mode: Option<String>,
+    pub server_url: Option<String>,
     pub metrics: WorkerMetrics,
 }
 

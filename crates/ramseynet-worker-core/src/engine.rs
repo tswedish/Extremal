@@ -237,6 +237,7 @@ pub async fn run_engine(
     mut shutdown: watch::Receiver<bool>,
     mut cmd_rx: mpsc::Receiver<WorkerCommand>,
     event_tx: mpsc::Sender<WorkerEvent>,
+    default_server_url: String,
 ) -> Result<(), WorkerError> {
         let mut rng = SmallRng::from_entropy();
         let mut pool_rng = SmallRng::from_entropy();
@@ -267,7 +268,11 @@ pub async fn run_engine(
                            round: u64,
                            active_strategy: &Option<String>,
                            metrics: &WorkerMetrics,
-                           event_tx: &mpsc::Sender<WorkerEvent>| {
+                           event_tx: &mpsc::Sender<WorkerEvent>,
+                           default_server_url: &str| {
+            let server_url = config.as_ref()
+                .map(|c| c.server_url.clone())
+                .unwrap_or_else(|| default_server_url.to_string());
             let status = WorkerStatus {
                 state: state.clone(),
                 k: config.as_ref().map(|c| c.k),
@@ -276,6 +281,7 @@ pub async fn run_engine(
                 strategy: active_strategy.clone(),
                 round,
                 init_mode: config.as_ref().map(|c| format!("{:?}", c.init_mode)),
+                server_url: Some(server_url),
                 metrics: metrics.clone(),
             };
             let _ = event_tx.try_send(WorkerEvent::Status(status));
@@ -309,10 +315,10 @@ pub async fn run_engine(
             });
             config = Some(cfg);
             state = WorkerState::Searching;
-            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
         } else {
             info!("starting in idle mode — waiting for commands");
-            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
         }
 
         loop {
@@ -329,7 +335,7 @@ pub async fn run_engine(
                             match cmd {
                                 WorkerCommand::Start { k, ell, n, config: patch } => {
                                     info!(k, ell, n, "received start command");
-                                    let cfg = build_config(k, ell, n, &patch);
+                                    let cfg = build_config(k, ell, n, &patch, &default_server_url);
                                     if !cfg.offline {
                                         client = Some(ServerClient::new(&cfg.server_url));
                                     } else {
@@ -354,12 +360,12 @@ pub async fn run_engine(
                                     state = WorkerState::Searching;
                                     metrics.known_cids_count = server_cids.len();
                                     metrics.local_pool_size = local_pool.len();
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                                 }
                                 WorkerCommand::Status => {
                                     metrics.known_cids_count = server_cids.len();
                                     metrics.local_pool_size = local_pool.len();
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                                 }
                                 WorkerCommand::ClearKnownCids => {
                                     info!(prev = server_cids.len(), "clearing server CID cache");
@@ -393,17 +399,17 @@ pub async fn run_engine(
                                 WorkerCommand::Resume => {
                                     info!("resuming search");
                                     state = WorkerState::Searching;
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                                 }
                                 WorkerCommand::Stop => {
                                     info!("stopping search (from paused)");
                                     state = WorkerState::Idle;
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                                 }
                                 WorkerCommand::Status => {
                                     metrics.known_cids_count = server_cids.len();
                                     metrics.local_pool_size = local_pool.len();
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                                 }
                                 WorkerCommand::ClearKnownCids => {
                                     info!(prev = server_cids.len(), "clearing server CID cache");
@@ -444,17 +450,17 @@ pub async fn run_engine(
                             WorkerCommand::Pause => {
                                 info!("pausing search");
                                 state = WorkerState::Paused;
-                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                             }
                             WorkerCommand::Stop => {
                                 info!("stopping search");
                                 state = WorkerState::Idle;
-                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                             }
                             WorkerCommand::Status => {
                                 metrics.known_cids_count = server_cids.len();
                                 metrics.local_pool_size = local_pool.len();
-                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                             }
                                 WorkerCommand::ClearKnownCids => {
                                     info!(prev = server_cids.len(), "clearing server CID cache");
@@ -550,7 +556,7 @@ pub async fn run_engine(
                         None => {
                             error!("no strategy available");
                             state = WorkerState::Idle;
-                            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                             continue;
                         }
                     };
@@ -618,7 +624,7 @@ pub async fn run_engine(
                                             message: format!("strategy panicked: {e}"),
                                         });
                                         state = WorkerState::Idle;
-                                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                                         break None;
                                     }
                                 }
@@ -637,7 +643,7 @@ pub async fn run_engine(
                                         }
                                     }
                                     WorkerCommand::Status => {
-                                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                                     }
                                     _ => {}
                                 }
@@ -705,7 +711,7 @@ pub async fn run_engine(
                             elapsed_ms = elapsed.as_millis() as u64,
                             "search interrupted"
                         );
-                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                         if *shutdown.borrow() {
                             return Ok(());
                         }
@@ -793,7 +799,7 @@ pub async fn run_engine(
                         consecutive_failures = 0;
                     }
 
-                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                 }
             }
         }
@@ -875,7 +881,10 @@ fn feed_local_pool(
     }
 }
 
-/// Submit a batch of scored discoveries to the server.
+/// Maximum concurrent submissions to the server.
+const SUBMIT_CONCURRENCY: usize = 8;
+
+/// Submit a batch of scored discoveries to the server with bounded concurrency.
 async fn submit_batch(
     client: &ServerClient,
     scored: &[LocalDiscovery],
@@ -887,45 +896,82 @@ async fn submit_batch(
 ) -> (usize, usize, usize) {
     let mut submitted = 0usize;
     let mut admitted = 0usize;
-    let mut skipped = 0usize;
 
-    for discovery in scored {
-        // Skip if already known to be on the server
-        if server_cids.contains(&discovery.cid) {
-            skipped += 1;
-            continue;
+    // Filter to submittable discoveries (not already known, above threshold)
+    let to_submit: Vec<_> = scored
+        .iter()
+        .filter(|d| {
+            if server_cids.contains(&d.cid) {
+                return false;
+            }
+            if !threshold.would_admit(&d.score) {
+                debug!(graph_cid = %d.cid.to_hex(), "skipping — below threshold");
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    let skipped = scored.len() - to_submit.len();
+
+    // Submit with bounded concurrency using JoinSet
+    let mut join_set = tokio::task::JoinSet::new();
+    let mut pending = 0usize;
+    let mut iter = to_submit.into_iter();
+
+    loop {
+        // Fill up to SUBMIT_CONCURRENCY concurrent tasks
+        while pending < SUBMIT_CONCURRENCY {
+            if let Some(discovery) = iter.next() {
+                let client = client.clone();
+                let rgxf_json = rgxf::to_json(&discovery.graph);
+                let cid_hex = discovery.cid.to_hex();
+                join_set.spawn(async move {
+                    let result = client.submit(k, ell, n, rgxf_json).await;
+                    (cid_hex, result)
+                });
+                pending += 1;
+            } else {
+                break;
+            }
         }
-        if !threshold.would_admit(&discovery.score) {
-            debug!(
-                graph_cid = %discovery.cid.to_hex(),
-                "skipping — below threshold"
-            );
-            skipped += 1;
-            continue;
+
+        if pending == 0 {
+            break;
         }
-        let rgxf_json = rgxf::to_json(&discovery.graph);
-        match client.submit(k, ell, n, rgxf_json).await {
-            Ok(resp) => {
-                let was_admitted = resp.admitted.unwrap_or(false);
-                info!(
-                    graph_cid = %resp.graph_cid, verdict = %resp.verdict,
-                    admitted = was_admitted, rank = ?resp.rank, "submitted graph"
-                );
-                server_cids.insert_hex(&resp.graph_cid);
-                submitted += 1;
-                if was_admitted {
-                    admitted += 1;
-                    info!("admitted to leaderboard! rank={}", resp.rank.unwrap_or(0));
+
+        // Wait for one task to complete
+        if let Some(result) = join_set.join_next().await {
+            pending -= 1;
+            match result {
+                Ok((_cid_hex, Ok(resp))) => {
+                    let was_admitted = resp.admitted.unwrap_or(false);
+                    info!(
+                        graph_cid = %resp.graph_cid, verdict = %resp.verdict,
+                        admitted = was_admitted, rank = ?resp.rank, "submitted graph"
+                    );
+                    server_cids.insert_hex(&resp.graph_cid);
+                    submitted += 1;
+                    if was_admitted {
+                        admitted += 1;
+                        info!("admitted to leaderboard! rank={}", resp.rank.unwrap_or(0));
+                    }
+                }
+                Ok((cid_hex, Err(e))) => {
+                    error!(graph_cid = %cid_hex, "submit failed: {e}");
+                }
+                Err(e) => {
+                    error!("submit task panicked: {e}");
                 }
             }
-            Err(e) => error!(graph_cid = %discovery.cid.to_hex(), "submit failed: {e}"),
         }
     }
+
     (submitted, admitted, skipped)
 }
 
 /// Build an EngineConfig from a Start command's patch, using sensible defaults.
-fn build_config(k: u32, ell: u32, n: u32, patch: &EngineConfigPatch) -> EngineConfig {
+fn build_config(k: u32, ell: u32, n: u32, patch: &EngineConfigPatch, default_server_url: &str) -> EngineConfig {
     let num_edges = n * (n - 1) / 2;
     let noise_flips = patch
         .noise_flips
@@ -953,7 +999,7 @@ fn build_config(k: u32, ell: u32, n: u32, patch: &EngineConfigPatch) -> EngineCo
         init_mode,
         strategy_id: patch.strategy.clone(),
         strategy_config: patch.strategy_config.clone().unwrap_or(serde_json::json!({})),
-        server_url: patch.server_url.clone().unwrap_or_else(|| "http://localhost:3001".into()),
+        server_url: patch.server_url.clone().unwrap_or_else(|| default_server_url.to_string()),
     }
 }
 

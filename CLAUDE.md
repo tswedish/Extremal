@@ -56,7 +56,7 @@ Rust workspace (`crates/`) + SvelteKit 2 (`web/`).
 
 ## Leaderboard System
 
-Every valid (K,L,n) triple implicitly defines a leaderboard of capacity 10,000 (configurable via `--leaderboard-capacity` on the server). No explicit "challenges" — submit directly with `{k, ell, n, graph}`. Capacity can be changed at server restart — shrinking trims the lowest-ranked entries automatically.
+Every valid (K,L,n) triple implicitly defines a leaderboard of capacity 500 (configurable via `--leaderboard-capacity` on the server). No explicit "challenges" — submit directly with `{k, ell, n, graph}`. Capacity can be changed at server restart — shrinking trims the lowest-ranked entries automatically.
 
 **Scoring** (4-tier lexicographic, lower is better):
 - **T1**: `(max(C_omega, C_alpha), min(C_omega, C_alpha))` — clique counts, lowest wins

@@ -323,9 +323,9 @@ async fn system_test_full_lifecycle() {
         assert_eq!(resp.status(), 200);
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["entry_count"], 1);
-        assert_eq!(body["capacity"], 10000);
+        assert_eq!(body["capacity"], 500);
         assert!(body["worst_tier1_max"].is_null(), "board not full, no worst");
-        eprintln!("[PASS] 14. Threshold: 1/10000 entries, board not full");
+        eprintln!("[PASS] 14. Threshold: 1/500 entries, board not full");
     }
 
     // ── 15. K > L auto-canonicalization ─────────────────────────────
@@ -483,7 +483,7 @@ async fn test_nonexistent_leaderboard() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["entry_count"], 0);
-    assert_eq!(body["capacity"], 10000);
+    assert_eq!(body["capacity"], 500);
     eprintln!("[PASS] threshold for nonexistent leaderboard returns 0 entries");
 
     // N values for nonexistent pair

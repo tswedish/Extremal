@@ -639,7 +639,7 @@ header h1 {
   <span class="metric">Score: <span class="metric-val" id="m-score-ms">--</span>ms</span>
   <span class="metric">Submit: <span class="metric-val" id="m-submit-ms">--</span>ms</span>
   <span class="metric-sep"></span>
-  <span class="metric">Server: <span class="metric-val" id="m-server">--</span></span>
+  <span class="metric">Server: <span class="metric-val" id="m-server">--</span> <span class="metric-val" id="m-server-url" style="font-weight:400;color:#666680;font-size:10px"></span></span>
   <span class="metric">Leaderboard: <span class="metric-val" id="m-lb-total">--</span></span>
 </div>
 <div class="stats-bar" id="stats-bar">
@@ -1359,6 +1359,7 @@ function handleStatus(msg) {
     $('m-submit-ms').textContent = m.last_submit_ms || '--';
     $('m-server').textContent = m.server_connected ? 'online' : 'offline';
     $('m-server').className = 'metric-val' + (m.server_connected ? '' : ' warn');
+    $('m-server-url').textContent = msg.server_url ? '(' + msg.server_url + ')' : '';
     $('m-lb-total').textContent = m.leaderboard_total || 0;
   }
 

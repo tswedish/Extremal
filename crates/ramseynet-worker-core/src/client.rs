@@ -49,6 +49,7 @@ struct SubmitRequest {
 }
 
 /// Async HTTP client for the RamseyNet server.
+#[derive(Clone)]
 pub struct ServerClient {
     base_url: String,
     client: reqwest::Client,

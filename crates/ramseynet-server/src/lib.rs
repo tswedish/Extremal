@@ -9,13 +9,13 @@ use axum::{
 use ramseynet_graph::{compute_cid, rgxf, RgxfJson};
 use ramseynet_ledger::{AdmitScore, Ledger, LedgerError};
 use ramseynet_types::RamseyParams;
-use ramseynet_verifier::scoring::compute_score_with_canonical;
+use ramseynet_verifier::scoring::verify_and_score;
 use ramseynet_verifier::{canonical_form, verify_ramsey, VerifyRequest, VerifyResponse};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // ── Application state ────────────────────────────────────────────────
 
@@ -280,9 +280,9 @@ struct SubmitRequest {
 
 /// Full lifecycle: verify + canonicalize + store + leaderboard admission.
 ///
-/// The submitted graph is canonicalized via nauty before storage.
-/// The canonical CID is the submission's identity — isomorphic graphs
-/// map to the same CID and are deduplicated automatically.
+/// Optimized pipeline with just 2 blocking dispatches:
+///   1. CPU: canonical_form + verify + score (single complement, single nauty)
+///   2. DB:  store_submission + store_receipt + try_admit (single transaction)
 async fn submit_graph(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SubmitRequest>,
@@ -307,132 +307,93 @@ async fn submit_graph(
         ));
     }
 
-    // 2. Compute canonical form and canonical CID
-    //    The canonical CID is isomorphism-invariant: two isomorphic graphs
-    //    produce the same CID and are treated as duplicates.
-    //    The aut_order is reused in step 6 to avoid a redundant nauty call.
-    let (canonical_adj, aut_order) = canonical_form(&adj);
-    let canonical_cid = compute_cid(&canonical_adj);
-    let cid_hex = canonical_cid.to_hex();
+    // 2. CPU dispatch: canonical form + verify + score in a single pass
+    //    One nauty call, one complement construction, shared clique data.
+    let vsr = tokio::task::spawn_blocking(move || {
+        verify_and_score(&adj, k, ell)
+    })
+    .await
+    .unwrap();
+
+    let cid_hex = vsr.canonical_cid.to_hex();
+    let verdict_str = vsr.verdict.to_string();
 
     info!(
         graph_cid = %cid_hex,
         k, ell, n,
-        edges = adj.num_edges(),
-        "received submission (canonical CID)"
+        verdict = %vsr.verdict,
+        "verified + scored graph"
     );
 
-    // 3. Verify the original graph (verification is label-independent)
-    let result = verify_ramsey(&adj, k, ell, &canonical_cid);
-
-    info!(
-        graph_cid = %cid_hex,
-        verdict = %result.verdict,
-        reason = ?result.reason,
-        "verified graph"
-    );
-
-    // 4. Store submission using canonical RGXF and canonical CID
-    let canonical_rgxf = rgxf::to_json(&canonical_adj);
+    // 3. Prepare the canonical RGXF for storage
+    let canonical_rgxf = rgxf::to_json(&vsr.canonical_graph);
     let rgxf_json_str = serde_json::to_string(&canonical_rgxf).unwrap();
-    let ledger = state.ledger.clone();
-    let cid_hex2 = cid_hex.clone();
-    let is_duplicate = {
-        let result = tokio::task::spawn_blocking(move || {
-            ledger.store_submission(k, ell, &cid_hex2, n, &rgxf_json_str)
-        })
-        .await
-        .unwrap();
-        match result {
-            Ok(_) => false,
-            Err(LedgerError::GraphAlreadySubmitted(_)) => {
-                info!(graph_cid = %cid_hex, "duplicate submission (isomorphic graph already stored)");
-                true
-            }
-            Err(e) => return Err(map_ledger_error(e)),
-        }
-    };
 
-    // 5. Store verification receipt (skip if duplicate)
-    let verdict_str = result.verdict.to_string();
-    let reason = result.reason.clone();
-    let witness = result.witness.clone();
-
-    if !is_duplicate {
-        let ledger = state.ledger.clone();
-        let cid_hex3 = cid_hex.clone();
-        let verdict2 = verdict_str.clone();
-        let reason2 = reason.clone();
-        let witness2 = witness.clone();
-        tokio::task::spawn_blocking(move || {
-            ledger.store_receipt(
-                &cid_hex3,
-                k,
-                ell,
-                &verdict2,
-                reason2.as_deref(),
-                witness2.as_deref(),
-            )
-        })
-        .await
-        .unwrap()
-        .map_err(map_ledger_error)?;
-    }
-
-    // 6. If accepted, compute score (canonical form) and try to admit
-    let mut admitted = false;
-    let mut rank: Option<u32> = None;
-    let mut score_json: Option<Value> = None;
-
-    if verdict_str == "accepted" {
-        // Reuse the canonical form + aut_order from step 2 to avoid a
-        // redundant nauty call. Only the clique counting runs here.
-        let adj2 = adj.clone();
-        let cid_for_score = canonical_cid.clone();
-        let graph_score = tokio::task::spawn_blocking(move || {
-            compute_score_with_canonical(&adj2, aut_order, cid_for_score)
-        })
-        .await
-        .unwrap();
-
-        let graph_score = &graph_score;
-
-        let admit_score = AdmitScore {
+    // Build admit score if the graph was accepted
+    let admit_score = vsr.score.as_ref().map(|graph_score| {
+        AdmitScore {
             tier1_max: graph_score.c_omega.max(graph_score.c_alpha),
             tier1_min: graph_score.c_omega.min(graph_score.c_alpha),
             goodman_gap: graph_score.goodman_gap,
             tier2_aut: graph_score.aut_order,
             tier3_cid: cid_hex.clone(),
             score_json: serde_json::to_string(graph_score).unwrap(),
-        };
+        }
+    });
 
-        let ledger = state.ledger.clone();
-        let cid_hex4 = cid_hex.clone();
-        let entry = tokio::task::spawn_blocking(move || {
-            ledger.try_admit(k, ell, n, &cid_hex4, &admit_score)
-        })
-        .await
-        .unwrap()
-        .map_err(map_ledger_error)?;
+    // 4. DB dispatch: store + receipt + admit in a single transaction
+    let ledger = state.ledger.clone();
+    let cid_hex2 = cid_hex.clone();
+    let verdict2 = verdict_str.clone();
+    let reason = vsr.reason.clone();
+    let witness = vsr.witness.clone();
+    let (is_duplicate, lb_entry) = tokio::task::spawn_blocking(move || {
+        ledger.submit_and_admit(
+            k, ell, n,
+            &cid_hex2,
+            &rgxf_json_str,
+            &verdict2,
+            reason.as_deref(),
+            witness.as_deref(),
+            admit_score.as_ref(),
+        )
+    })
+    .await
+    .unwrap()
+    .map_err(map_ledger_error)?;
 
-        if let Some(entry) = entry {
-            admitted = true;
-            rank = Some(entry.rank);
-            score_json = serde_json::from_str(&entry.score_json).ok();
+    if is_duplicate {
+        info!(graph_cid = %cid_hex, "duplicate submission (isomorphic graph already stored)");
+    }
 
+    let admitted = lb_entry.is_some();
+    let rank = lb_entry.as_ref().map(|e| e.rank);
+    let score_json: Option<Value> = lb_entry
+        .as_ref()
+        .and_then(|e| serde_json::from_str(&e.score_json).ok());
+
+    if let Some(ref entry) = lb_entry {
+        if is_duplicate {
+            debug!(
+                graph_cid = %cid_hex,
+                k, ell, n,
+                rank = entry.rank,
+                "duplicate — already on leaderboard"
+            );
+        } else {
             info!(
                 graph_cid = %cid_hex,
                 k, ell, n,
                 rank = entry.rank,
                 "admitted to leaderboard"
             );
-        } else {
-            warn!(
-                graph_cid = %cid_hex,
-                k, ell, n,
-                "not admitted — below leaderboard threshold"
-            );
         }
+    } else if verdict_str == "accepted" {
+        debug!(
+            graph_cid = %cid_hex,
+            k, ell, n,
+            "not admitted — below leaderboard threshold"
+        );
     }
 
     let status_code = if is_duplicate {
@@ -446,8 +407,8 @@ async fn submit_graph(
         Json(json!({
             "graph_cid": cid_hex,
             "verdict": verdict_str,
-            "reason": reason,
-            "witness": witness,
+            "reason": vsr.reason,
+            "witness": vsr.witness,
             "admitted": admitted,
             "rank": rank,
             "score": score_json,

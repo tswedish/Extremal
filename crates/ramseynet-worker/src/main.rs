@@ -291,6 +291,7 @@ async fn main() -> Result<()> {
         shutdown_rx,
         cmd_rx,
         event_tx,
+        cli.server.clone(),
     ).await?;
 
     Ok(())

@@ -73,6 +73,195 @@ impl Ledger {
             verified_at: now,
         })
     }
+
+    /// Combined store + receipt + admit in a single mutex acquisition and
+    /// single transaction. This eliminates per-operation fsync overhead and
+    /// reduces the number of spawn_blocking calls needed in the server.
+    ///
+    /// Returns `(is_duplicate, Option<LeaderboardEntry>)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn submit_and_admit(
+        &self,
+        k: u32,
+        ell: u32,
+        n: u32,
+        graph_cid: &str,
+        rgxf_json: &str,
+        verdict: &str,
+        reason: Option<&str>,
+        witness: Option<&[u32]>,
+        score: Option<&AdmitScore>,
+    ) -> Result<(bool, Option<LeaderboardEntry>), LedgerError> {
+        let (k, ell) = canonical(k, ell);
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(LedgerError::Db)?;
+        let now = Utc::now();
+        let now_str = now.to_rfc3339();
+
+        // 1. Store submission (detect duplicate)
+        let is_duplicate = match tx.execute(
+            "INSERT INTO graph_submissions (graph_cid, k, ell, n, rgxf_json, submitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![graph_cid, k, ell, n, rgxf_json, now_str],
+        ) {
+            Ok(_) => false,
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                true
+            }
+            Err(e) => return Err(LedgerError::Db(e)),
+        };
+
+        // 2. Store receipt (skip if duplicate — receipt already exists)
+        if !is_duplicate {
+            let witness_json = witness.map(|w| serde_json::to_string(w).unwrap());
+            tx.execute(
+                "INSERT INTO verify_receipts (graph_cid, k, ell, verdict, reason, witness_json, verified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![graph_cid, k, ell, verdict, reason, witness_json, now_str],
+            ).map_err(LedgerError::Db)?;
+        }
+
+        // 3. Try to admit (only if accepted and score provided)
+        let entry = if let Some(score) = score {
+            self.admit_in_tx(&tx, k, ell, n, graph_cid, score, &now_str)?
+        } else {
+            None
+        };
+
+        tx.commit().map_err(LedgerError::Db)?;
+        Ok((is_duplicate, entry))
+    }
+
+    /// Leaderboard admission logic, factored out for use inside a transaction.
+    #[allow(clippy::too_many_arguments)]
+    fn admit_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        k: u32,
+        ell: u32,
+        n: u32,
+        graph_cid: &str,
+        score: &AdmitScore,
+        now_str: &str,
+    ) -> Result<Option<LeaderboardEntry>, LedgerError> {
+        // Duplicate check on leaderboard
+        let exists: bool = tx
+            .query_row(
+                "SELECT COUNT(*) FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
+                params![k, ell, n, graph_cid],
+                |row: &rusqlite::Row<'_>| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if exists {
+            let entry = tx.query_row(
+                "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
+                params![k, ell, n, graph_cid],
+                |row: &rusqlite::Row<'_>| {
+                    Ok(LeaderboardEntry {
+                        k: row.get(0)?,
+                        ell: row.get(1)?,
+                        n: row.get(2)?,
+                        graph_cid: row.get(3)?,
+                        rank: row.get(4)?,
+                        tier1_max: row.get::<_, i64>(5)? as u64,
+                        tier1_min: row.get::<_, i64>(6)? as u64,
+                        goodman_gap: row.get::<_, i64>(7)? as u64,
+                        tier2_aut: row.get(8)?,
+                        score_json: row.get(9)?,
+                        admitted_at: parse_datetime(row.get::<_, String>(10)?),
+                    })
+                },
+            )?;
+            return Ok(Some(entry));
+        }
+
+        let count: u32 = tx.query_row(
+            "SELECT COUNT(*) FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3",
+            params![k, ell, n],
+            |row: &rusqlite::Row<'_>| row.get(0),
+        )?;
+
+        // If full, check against worst entry
+        if count >= self.capacity {
+            let worst = tx.query_row(
+                "SELECT tier1_max, tier1_min, goodman_gap, tier2_aut, tier3_cid, graph_cid FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 ORDER BY rank DESC LIMIT 1",
+                params![k, ell, n],
+                |row: &rusqlite::Row<'_>| {
+                    Ok((
+                        row.get::<_, i64>(0)? as u64,
+                        row.get::<_, i64>(1)? as u64,
+                        row.get::<_, i64>(2)? as u64,
+                        row.get::<_, f64>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )?;
+
+            let is_better = score_cmp(
+                score.tier1_max,
+                score.tier1_min,
+                score.goodman_gap,
+                score.tier2_aut,
+                &score.tier3_cid,
+                worst.0,
+                worst.1,
+                worst.2,
+                worst.3,
+                &worst.4,
+            ) == std::cmp::Ordering::Less;
+
+            if !is_better {
+                return Ok(None);
+            }
+
+            tx.execute(
+                "DELETE FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
+                params![k, ell, n, worst.5],
+            )?;
+        }
+
+        tx.execute(
+            "INSERT INTO leaderboard (k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, tier3_cid, score_json, admitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                k, ell, n, graph_cid,
+                self.capacity,
+                score.tier1_max as i64,
+                score.tier1_min as i64,
+                score.goodman_gap as i64,
+                score.tier2_aut,
+                score.tier3_cid,
+                score.score_json,
+                now_str
+            ],
+        )?;
+
+        recompute_ranks(tx, k, ell, n)?;
+
+        let entry = tx.query_row(
+            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
+            params![k, ell, n, graph_cid],
+            |row: &rusqlite::Row<'_>| {
+                Ok(LeaderboardEntry {
+                    k: row.get(0)?,
+                    ell: row.get(1)?,
+                    n: row.get(2)?,
+                    graph_cid: row.get(3)?,
+                    rank: row.get(4)?,
+                    tier1_max: row.get::<_, i64>(5)? as u64,
+                    tier1_min: row.get::<_, i64>(6)? as u64,
+                    goodman_gap: row.get::<_, i64>(7)? as u64,
+                    tier2_aut: row.get(8)?,
+                    score_json: row.get(9)?,
+                    admitted_at: parse_datetime(row.get::<_, String>(10)?),
+                })
+            },
+        )?;
+
+        Ok(Some(entry))
+    }
 }
 
 // ── Leaderboard operations ──────────────────────────────────────────

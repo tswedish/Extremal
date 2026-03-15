@@ -18,7 +18,7 @@ use std::sync::Mutex;
 pub const LEDGER_VERSION: &str = "0.3.0";
 
 /// Default leaderboard capacity per (k, ell, n) triple.
-pub const DEFAULT_LEADERBOARD_CAPACITY: u32 = 10_000;
+pub const DEFAULT_LEADERBOARD_CAPACITY: u32 = 500;
 
 /// SQLite-backed ledger for the RamseyNet protocol.
 ///
