@@ -39,11 +39,14 @@
 		return JSON.stringify(rgxf, null, 2);
 	}
 
-	/** Compute Goodman's minimum for n vertices. */
+	/** Compute Goodman's minimum for n vertices.
+	 *  g(n) = C(n,3) - floor(n * floor((n-1)^2 / 4) / 2)
+	 *  NOTE: This must match goodman_minimum() in ramseynet-verifier/src/scoring.rs.
+	 *  The server also includes goodman_minimum in score_json for verification. */
 	function goodmanMinimum(n: number): number {
 		if (n < 3) return 0;
 		const c_n_3 = n * (n - 1) * (n - 2) / 6;
-		const floorTerm = Math.floor(n / 2) * Math.floor((n - 1) * (n - 1) / 4);
+		const floorTerm = Math.floor(n * Math.floor((n - 1) * (n - 1) / 4) / 2);
 		return c_n_3 - floorTerm;
 	}
 
@@ -173,7 +176,7 @@
 					</div>
 					<div class="score-item">
 						<span class="score-label">Goodman minimum</span>
-						<span class="score-val">{goodmanMinimum(detail.n)}</span>
+						<span class="score-val">{score.goodman_min ?? goodmanMinimum(detail.n)}</span>
 					</div>
 					<div class="score-item">
 						<span class="score-label">Goodman gap</span>

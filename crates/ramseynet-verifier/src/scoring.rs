@@ -45,6 +45,10 @@ pub struct GraphScore {
     /// Goodman gap: distance from Goodman's minimum for this n. 0 = optimal.
     #[serde(default)]
     pub goodman_gap: u64,
+    /// Goodman's theoretical minimum for this n. Included so consumers
+    /// don't need to reimplement the formula.
+    #[serde(default)]
+    pub goodman_min: u64,
     /// Automorphism group order |Aut(G)|.
     pub aut_order: f64,
     /// Content ID of the graph (deterministic tiebreaker).
@@ -68,7 +72,8 @@ impl GraphScore {
     ) -> Self {
         let tier1 = (c_omega.max(c_alpha), c_omega.min(c_alpha));
         let goodman = triangles + triangles_complement;
-        let goodman_gap = goodman.saturating_sub(goodman_minimum(n));
+        let goodman_min = goodman_minimum(n);
+        let goodman_gap = goodman.saturating_sub(goodman_min);
         Self {
             omega,
             alpha,
@@ -78,6 +83,7 @@ impl GraphScore {
             triangles_complement,
             goodman,
             goodman_gap,
+            goodman_min,
             aut_order,
             cid,
             tier1,
@@ -181,7 +187,10 @@ pub fn compute_score(graph: &AdjacencyMatrix, cid: &GraphCid) -> GraphScore {
 /// Compute Goodman's minimum: the minimum total number of monochromatic
 /// triangles in any 2-coloring of K_n.
 ///
-/// Formula: g(n) = C(n,3) - floor(n/2) * floor((n-1)^2 / 4)
+/// Formula: g(n) = C(n,3) - floor(n * floor((n-1)^2 / 4) / 2)
+///
+/// Equivalently: achieved when all vertex degrees equal floor((n-1)/2).
+/// Cross-validated against the degree-sum reference in tests.
 pub fn goodman_minimum(n: u32) -> u64 {
     if n < 3 {
         return 0;
@@ -309,26 +318,58 @@ mod tests {
     }
 
     /// Goodman minimum for small values of n.
+    /// Compute the exact Goodman minimum via the degree-sum formulation.
+    /// This is the "reference" implementation used only for testing.
+    ///
+    /// g(n) = C(n,3) - sum(d_v * (n-1-d_v)) / 2
+    /// minimized when all d_v = floor((n-1)/2) or ceil((n-1)/2).
+    fn goodman_minimum_exact(n: u32) -> u64 {
+        if n < 3 {
+            return 0;
+        }
+        let n = n as u64;
+        let c_n_3 = n * (n - 1) * (n - 2) / 6;
+        let d_low = (n - 1) / 2;
+        let d_high = n / 2; // = ceil((n-1)/2)
+        let sum = if n % 2 == 1 {
+            // All degrees = (n-1)/2 (exact integer)
+            n * d_low * (n - 1 - d_low)
+        } else {
+            // n/2 vertices at d_low, n/2 at d_high
+            (n / 2) * d_low * (n - 1 - d_low) + (n / 2) * d_high * (n - 1 - d_high)
+        };
+        c_n_3 - sum / 2
+    }
+
+    /// Cross-validate goodman_minimum() against the exact degree-sum
+    /// reference for n = 0..50. This ensures the closed-form integer
+    /// formula matches the definitional computation.
     #[test]
-    fn goodman_minimum_values() {
+    fn goodman_minimum_cross_validation() {
+        for n in 0..50 {
+            let fast = goodman_minimum(n);
+            let exact = goodman_minimum_exact(n);
+            assert_eq!(
+                fast, exact,
+                "goodman_minimum({n}) = {fast}, expected {exact} (from degree-sum)"
+            );
+        }
+    }
+
+    /// Spot-check specific known values.
+    #[test]
+    fn goodman_minimum_known_values() {
         assert_eq!(goodman_minimum(0), 0);
         assert_eq!(goodman_minimum(1), 0);
         assert_eq!(goodman_minimum(2), 0);
-        assert_eq!(goodman_minimum(3), 0); // C(3,3)=1, floor(3/2)*floor(4/4)=1*1=1, 1-1=0
-        assert_eq!(goodman_minimum(4), 0); // C(4,3)=4, floor(4/2)*floor(9/4)=2*2=4, 4-4=0
-        assert_eq!(goodman_minimum(5), 0); // C(5,3)=10, 5*16/4/2=10, 10-10=0
-        assert_eq!(goodman_minimum(6), 2); // C(6,3)=20, 6*25/4/2=6*6/2=18, 20-18=2
-    }
-
-    #[test]
-    fn goodman_minimum_n6() {
-        // C(6,3)=20, 6*(5^2)/4/2 = 6*6/2 = 18, 20-18 = 2
+        assert_eq!(goodman_minimum(3), 0);
+        assert_eq!(goodman_minimum(4), 0);
+        assert_eq!(goodman_minimum(5), 0);
         assert_eq!(goodman_minimum(6), 2);
-    }
-
-    #[test]
-    fn goodman_minimum_n25() {
-        // C(25,3)=2300, 25*(24^2)/4/2 = 25*144/2 = 1800, 2300-1800 = 500
+        assert_eq!(goodman_minimum(7), 4);
+        assert_eq!(goodman_minimum(8), 8);
+        assert_eq!(goodman_minimum(9), 12);
+        assert_eq!(goodman_minimum(17), 136);
         assert_eq!(goodman_minimum(25), 500);
     }
 }
