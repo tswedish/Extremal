@@ -8,6 +8,9 @@ pub mod command;
 pub mod observer;
 pub mod strategy;
 
-pub use command::{ConfigParam, EngineConfigPatch, ParamType, WorkerCommand, WorkerEvent, WorkerState, WorkerStatus, StrategyInfo};
+pub use command::{
+    ConfigParam, EngineConfigPatch, ParamType, StrategyInfo, WorkerCommand, WorkerEvent,
+    WorkerMetrics, WorkerState, WorkerStatus,
+};
 pub use observer::{ProgressInfo, SearchObserver};
 pub use strategy::{RawDiscovery, SearchJob, SearchResult, SearchStrategy};

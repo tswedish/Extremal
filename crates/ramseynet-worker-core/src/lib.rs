@@ -10,12 +10,10 @@ pub mod engine;
 pub mod error;
 pub mod init;
 
-pub use engine::{EngineConfig, WorkerEngine};
+pub use engine::{run_engine, EngineConfig};
 pub use error::WorkerError;
 pub use init::InitMode;
 pub use ramseynet_worker_api::{WorkerCommand, WorkerEvent};
-
-pub const WORKER_VERSION: &str = "0.2.0";
 
 use ramseynet_graph::AdjacencyMatrix;
 use ramseynet_verifier::scoring::GraphScore;

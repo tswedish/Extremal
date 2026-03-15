@@ -118,10 +118,12 @@ impl SearchStrategy for TreeSearch {
 
         if seed_score == 0 {
             best_valid = Some(seed.clone());
-            discoveries.push(RawDiscovery {
+            let raw = RawDiscovery {
                 graph: seed.clone(),
                 iteration: iters_used,
-            });
+            };
+            observer.on_discovery(&raw);
+            discoveries.push(raw);
         }
 
         observer.on_progress(&ProgressInfo {
@@ -407,5 +409,88 @@ mod tests {
             result.iterations_used,
             max_iters
         );
+    }
+
+    /// Observer that tracks on_discovery calls for testing.
+    struct TrackingObserver {
+        discoveries: std::sync::Mutex<Vec<RawDiscovery>>,
+        cancel_at: Option<u64>,
+    }
+
+    impl TrackingObserver {
+        fn new() -> Self {
+            Self {
+                discoveries: std::sync::Mutex::new(Vec::new()),
+                cancel_at: None,
+            }
+        }
+
+        fn with_cancel_at(iteration: u64) -> Self {
+            Self {
+                discoveries: std::sync::Mutex::new(Vec::new()),
+                cancel_at: Some(iteration),
+            }
+        }
+
+        fn discovery_count(&self) -> usize {
+            self.discoveries.lock().unwrap().len()
+        }
+    }
+
+    impl SearchObserver for TrackingObserver {
+        fn on_progress(&self, _info: &ProgressInfo) {}
+
+        fn on_discovery(&self, discovery: &RawDiscovery) {
+            self.discoveries.lock().unwrap().push(discovery.clone());
+        }
+
+        fn is_cancelled(&self) -> bool {
+            if let Some(at) = self.cancel_at {
+                self.discoveries.lock().unwrap().len() as u64 >= at
+            } else {
+                false
+            }
+        }
+    }
+
+    #[test]
+    fn tree_calls_on_discovery() {
+        let mut job = make_job(3, 3, 5, 10_000);
+        job.init_graph = Some(paley_graph(5));
+        let observer = TrackingObserver::new();
+
+        let result = TreeSearch.search(&job, &observer);
+
+        assert!(result.valid);
+        // on_discovery should have been called for each valid graph
+        assert!(
+            observer.discovery_count() > 0,
+            "on_discovery should be called when valid graphs are found"
+        );
+        // Every discovery should be streamed via on_discovery
+        assert_eq!(
+            result.discoveries.len(),
+            observer.discovery_count(),
+            "result.discoveries should match on_discovery calls"
+        );
+    }
+
+    #[test]
+    fn tree_respects_cancellation() {
+        let mut job = make_job(3, 3, 5, 1_000_000);
+        job.init_graph = Some(paley_graph(5));
+        // Cancel after first discovery
+        let observer = TrackingObserver::with_cancel_at(1);
+
+        let result = TreeSearch.search(&job, &observer);
+
+        // Should have stopped early (not used full budget)
+        assert!(
+            result.iterations_used < 1_000_000,
+            "search should stop early on cancellation, used {} iters",
+            result.iterations_used
+        );
+        // Should have at least 1 discovery (the one that triggered cancel)
+        assert!(observer.discovery_count() >= 1);
     }
 }

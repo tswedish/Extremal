@@ -27,6 +27,12 @@ pub enum WorkerCommand {
     /// Request current status.
     #[serde(rename = "status")]
     Status,
+    /// Clear the known CIDs dedup cache.
+    #[serde(rename = "clear_known_cids")]
+    ClearKnownCids,
+    /// Clear the local discovery pool.
+    #[serde(rename = "clear_local_pool")]
+    ClearLocalPool,
 }
 
 /// Partial configuration for starting a search. Missing fields use defaults.
@@ -71,7 +77,7 @@ pub enum WorkerState {
     Paused,
 }
 
-/// Status snapshot of the worker.
+/// Status snapshot of the worker, including runtime metrics.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkerStatus {
     pub state: WorkerState,
@@ -80,9 +86,32 @@ pub struct WorkerStatus {
     pub n: Option<u32>,
     pub strategy: Option<String>,
     pub round: u64,
-    pub local_pool_size: usize,
-    pub known_cids: usize,
     pub init_mode: Option<String>,
+    pub metrics: WorkerMetrics,
+}
+
+/// Runtime metrics for the worker engine.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct WorkerMetrics {
+    // Buffer sizes
+    pub known_cids_count: usize,
+    pub local_pool_size: usize,
+    pub discovery_buffer_size: usize,
+
+    // Cumulative counters
+    pub total_discoveries: u64,
+    pub total_submitted: u64,
+    pub total_admitted: u64,
+    pub total_skipped: u64,
+
+    // Last round timing (ms)
+    pub last_round_ms: u64,
+    pub last_scoring_ms: u64,
+    pub last_submit_ms: u64,
+
+    // Server state
+    pub server_connected: bool,
+    pub leaderboard_total: u32,
 }
 
 /// Description of a registered strategy and its configuration schema.

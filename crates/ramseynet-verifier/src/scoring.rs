@@ -58,6 +58,34 @@ pub struct GraphScore {
 }
 
 impl GraphScore {
+    /// Construct a GraphScore for threshold comparison only.
+    ///
+    /// Uses pre-computed tier values directly without re-deriving them.
+    /// This avoids the fragile pattern of passing zeros for n/omega/alpha
+    /// and hoping the derivation produces the correct tier values.
+    pub fn from_threshold(
+        tier1_max: u64,
+        tier1_min: u64,
+        goodman_gap: u64,
+        aut_order: f64,
+        cid: GraphCid,
+    ) -> Self {
+        Self {
+            omega: 0,
+            alpha: 0,
+            c_omega: tier1_max,
+            c_alpha: tier1_min,
+            triangles: 0,
+            triangles_complement: 0,
+            goodman: 0,
+            goodman_gap,
+            goodman_min: 0,
+            aut_order,
+            cid,
+            tier1: (tier1_max, tier1_min),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         n: u32,

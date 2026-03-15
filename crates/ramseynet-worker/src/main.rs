@@ -12,7 +12,7 @@ use ramseynet_verifier::scoring::GraphScore;
 use ramseynet_worker::viz::{SearchSnapshot, VizHandle};
 use ramseynet_worker_api::{ProgressInfo, WorkerEvent};
 use ramseynet_worker_core::engine::EngineConfig;
-use ramseynet_worker_core::{InitMode, VizBridge, WorkerEngine};
+use ramseynet_worker_core::{run_engine, InitMode, VizBridge};
 
 /// VizBridge implementation that forwards engine events to the VizHandle.
 struct VizBridgeImpl {
@@ -222,6 +222,7 @@ async fn main() -> Result<()> {
             max_known_cids: cli.max_known_cids,
             noise_flips,
             init_mode,
+            strategy_id: Some(cli.strategy.clone()),
             strategy_config: serde_json::json!({
                 "beam_width": cli.beam_width,
                 "max_depth": cli.max_depth,
@@ -283,7 +284,7 @@ async fn main() -> Result<()> {
         None
     };
 
-    WorkerEngine::run(
+    run_engine(
         initial_config,
         strategies,
         viz,

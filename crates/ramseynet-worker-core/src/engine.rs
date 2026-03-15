@@ -15,7 +15,7 @@ use ramseynet_types::GraphCid;
 use ramseynet_verifier::scoring::{compute_score_canonical, GraphScore};
 use ramseynet_worker_api::{
     EngineConfigPatch, ProgressInfo, SearchJob, SearchObserver, SearchStrategy, StrategyInfo,
-    WorkerCommand, WorkerEvent, WorkerState, WorkerStatus,
+    WorkerCommand, WorkerEvent, WorkerMetrics, WorkerState, WorkerStatus,
 };
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
@@ -39,6 +39,7 @@ pub struct EngineConfig {
     pub max_known_cids: usize,
     pub noise_flips: u32,
     pub init_mode: InitMode,
+    pub strategy_id: Option<String>,
     pub strategy_config: serde_json::Value,
     pub server_url: String,
 }
@@ -64,8 +65,8 @@ impl AdmissionThreshold {
             ) {
                 (Some(t1_max), Some(t1_min), Some(goodman_gap), Some(t2_aut), Some(t3_cid)) => {
                     match GraphCid::from_hex(t3_cid) {
-                        Ok(cid) => Some(GraphScore::new(
-                            0, 0, 0, t1_max, t1_min, goodman_gap, 0, t2_aut, cid,
+                        Ok(cid) => Some(GraphScore::from_threshold(
+                            t1_max, t1_min, goodman_gap, t2_aut, cid,
                         )),
                         Err(_) => None,
                     }
@@ -141,6 +142,7 @@ impl KnownCids {
 }
 
 /// A scored discovery in the local pool.
+#[derive(Clone)]
 struct LocalDiscovery {
     graph: AdjacencyMatrix,
     score: GraphScore,
@@ -177,22 +179,18 @@ impl SearchObserver for EngineObserver {
     }
 }
 
-/// The worker engine with state machine (idle/searching/paused).
-pub struct WorkerEngine;
-
-impl WorkerEngine {
-    /// Run the engine event loop. Processes commands and search rounds.
-    ///
-    /// If `initial_config` is `Some`, auto-starts searching. Otherwise
-    /// starts in idle state waiting for a Start command from the UI.
-    pub async fn run(
-        initial_config: Option<EngineConfig>,
-        strategies: Vec<Arc<dyn SearchStrategy>>,
-        viz: Option<Arc<dyn VizBridge>>,
-        mut shutdown: watch::Receiver<bool>,
-        mut cmd_rx: mpsc::Receiver<WorkerCommand>,
-        event_tx: mpsc::Sender<WorkerEvent>,
-    ) -> Result<(), WorkerError> {
+/// Run the worker engine event loop. Processes commands and search rounds.
+///
+/// If `initial_config` is `Some`, auto-starts searching. Otherwise
+/// starts in idle state waiting for a Start command from the UI.
+pub async fn run_engine(
+    initial_config: Option<EngineConfig>,
+    strategies: Vec<Arc<dyn SearchStrategy>>,
+    viz: Option<Arc<dyn VizBridge>>,
+    mut shutdown: watch::Receiver<bool>,
+    mut cmd_rx: mpsc::Receiver<WorkerCommand>,
+    event_tx: mpsc::Sender<WorkerEvent>,
+) -> Result<(), WorkerError> {
         let mut rng = SmallRng::from_entropy();
         let mut pool_rng = SmallRng::from_entropy();
 
@@ -210,13 +208,15 @@ impl WorkerEngine {
         let mut consecutive_failures: u32 = 0;
         let mut active_strategy_id: Option<String> = None;
 
+        // Runtime metrics — accumulated across rounds
+        let mut metrics = WorkerMetrics::default();
+
         // Helper to build and send status
         let send_status = |state: &WorkerState,
                            config: &Option<EngineConfig>,
                            round: u64,
-                           local_pool: &[LocalDiscovery],
-                           known: &KnownCids,
                            active_strategy: &Option<String>,
+                           metrics: &WorkerMetrics,
                            event_tx: &mpsc::Sender<WorkerEvent>| {
             let status = WorkerStatus {
                 state: state.clone(),
@@ -225,9 +225,8 @@ impl WorkerEngine {
                 n: config.as_ref().map(|c| c.n),
                 strategy: active_strategy.clone(),
                 round,
-                local_pool_size: local_pool.len(),
-                known_cids: known.len(),
                 init_mode: config.as_ref().map(|c| format!("{:?}", c.init_mode)),
+                metrics: metrics.clone(),
             };
             let _ = event_tx.try_send(WorkerEvent::Status(status));
         };
@@ -255,13 +254,15 @@ impl WorkerEngine {
             if !cfg.offline {
                 client = Some(ServerClient::new(&cfg.server_url));
             }
-            active_strategy_id = Some("tree".to_string());
+            active_strategy_id = cfg.strategy_id.clone().or_else(|| {
+                strategies.first().map(|s| s.id().to_string())
+            });
             config = Some(cfg);
             state = WorkerState::Searching;
-            send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
         } else {
             info!("starting in idle mode — waiting for commands");
-            send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
         }
 
         loop {
@@ -297,12 +298,27 @@ impl WorkerEngine {
                                     server_pool.clear();
                                     round = 0;
                                     consecutive_failures = 0;
+                                    metrics = WorkerMetrics::default();
                                     config = Some(cfg);
                                     state = WorkerState::Searching;
-                                    send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                                    metrics.known_cids_count = known.len();
+                                    metrics.local_pool_size = local_pool.len();
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                                 }
                                 WorkerCommand::Status => {
-                                    send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                                    metrics.known_cids_count = known.len();
+                                    metrics.local_pool_size = local_pool.len();
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                }
+                                WorkerCommand::ClearKnownCids => {
+                                    info!(prev = known.len(), "clearing known CIDs cache");
+                                    known.clear();
+                                    metrics.known_cids_count = 0;
+                                }
+                                WorkerCommand::ClearLocalPool => {
+                                    info!(prev = local_pool.len(), "clearing local pool");
+                                    local_pool.clear();
+                                    metrics.local_pool_size = 0;
                                 }
                                 _ => {
                                     let _ = event_tx.try_send(WorkerEvent::Error {
@@ -326,15 +342,27 @@ impl WorkerEngine {
                                 WorkerCommand::Resume => {
                                     info!("resuming search");
                                     state = WorkerState::Searching;
-                                    send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                                 }
                                 WorkerCommand::Stop => {
                                     info!("stopping search (from paused)");
                                     state = WorkerState::Idle;
-                                    send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                                 }
                                 WorkerCommand::Status => {
-                                    send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                                    metrics.known_cids_count = known.len();
+                                    metrics.local_pool_size = local_pool.len();
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                }
+                                WorkerCommand::ClearKnownCids => {
+                                    info!(prev = known.len(), "clearing known CIDs cache");
+                                    known.clear();
+                                    metrics.known_cids_count = 0;
+                                }
+                                WorkerCommand::ClearLocalPool => {
+                                    info!(prev = local_pool.len(), "clearing local pool");
+                                    local_pool.clear();
+                                    metrics.local_pool_size = 0;
                                 }
                                 _ => {
                                     let _ = event_tx.try_send(WorkerEvent::Error {
@@ -365,21 +393,33 @@ impl WorkerEngine {
                             WorkerCommand::Pause => {
                                 info!("pausing search");
                                 state = WorkerState::Paused;
-                                send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                             }
                             WorkerCommand::Stop => {
                                 info!("stopping search");
                                 state = WorkerState::Idle;
-                                send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                             }
                             WorkerCommand::Status => {
-                                send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                                metrics.known_cids_count = known.len();
+                                metrics.local_pool_size = local_pool.len();
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                            }
+                            WorkerCommand::ClearKnownCids => {
+                                info!(prev = known.len(), "clearing known CIDs cache");
+                                known.clear();
+                                metrics.known_cids_count = 0;
+                            }
+                            WorkerCommand::ClearLocalPool => {
+                                info!(prev = local_pool.len(), "clearing local pool");
+                                local_pool.clear();
+                                metrics.local_pool_size = 0;
                             }
                             _ => {}
                         }
                     }
                     if state != WorkerState::Searching {
-                        continue; // state changed by command
+                        continue;
                     }
 
                     round += 1;
@@ -456,7 +496,7 @@ impl WorkerEngine {
                         None => {
                             error!("no strategy available");
                             state = WorkerState::Idle;
-                            send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                             continue;
                         }
                     };
@@ -511,8 +551,19 @@ impl WorkerEngine {
 
                     let result = loop {
                         tokio::select! {
-                            result = &mut search_handle => {
-                                break result.unwrap();
+                            join_result = &mut search_handle => {
+                                match join_result {
+                                    Ok(result) => break Some(result),
+                                    Err(e) => {
+                                        error!("search strategy panicked: {e}");
+                                        let _ = event_tx.try_send(WorkerEvent::Error {
+                                            message: format!("strategy panicked: {e}"),
+                                        });
+                                        state = WorkerState::Idle;
+                                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
+                                        break None;
+                                    }
+                                }
                             }
                             // Commands handled immediately (not on a timer)
                             Some(cmd) = cmd_rx.recv() => {
@@ -528,7 +579,7 @@ impl WorkerEngine {
                                         }
                                     }
                                     WorkerCommand::Status => {
-                                        send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                                     }
                                     _ => {}
                                 }
@@ -565,6 +616,12 @@ impl WorkerEngine {
                         }
                     };
 
+                    // Handle strategy panic (result is None)
+                    let result = match result {
+                        Some(r) => r,
+                        None => continue, // state already set to Idle above
+                    };
+
                     let elapsed = start.elapsed();
 
                     if search_cancelled {
@@ -574,7 +631,7 @@ impl WorkerEngine {
                             elapsed_ms = elapsed.as_millis() as u64,
                             "search interrupted"
                         );
-                        send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                         if *shutdown.borrow() {
                             return Ok(());
                         }
@@ -598,11 +655,19 @@ impl WorkerEngine {
                         }
                     }
 
+                    let score_start = Instant::now();
                     let scored = score_and_dedup(
                         &final_raws, &mut known, viz.as_ref(),
                         target_n, &strategy_id,
                     );
                     feed_local_pool(&scored, &mut local_pool, local_pool_capacity, use_server_pool);
+                    metrics.last_scoring_ms = score_start.elapsed().as_millis() as u64;
+                    metrics.total_discoveries += scored.len() as u64;
+                    metrics.last_round_ms = elapsed.as_millis() as u64;
+                    metrics.known_cids_count = known.len();
+                    metrics.local_pool_size = local_pool.len();
+                    metrics.leaderboard_total = leaderboard_total;
+                    metrics.server_connected = is_online;
 
                     // ── Log results ──────────────────────────────────
                     if !scored.is_empty() {
@@ -619,10 +684,15 @@ impl WorkerEngine {
 
                     // ── Submit to server ─────────────────────────────
                     if is_online && !scored.is_empty() {
+                        let submit_start = Instant::now();
                         let cl = client.as_ref().unwrap();
                         let (submitted, admitted, skipped) = submit_batch(
                             cl, &scored, &threshold, &mut known, k, ell, target_n,
                         ).await;
+                        metrics.last_submit_ms = submit_start.elapsed().as_millis() as u64;
+                        metrics.total_submitted += submitted as u64;
+                        metrics.total_admitted += admitted as u64;
+                        metrics.total_skipped += skipped as u64;
                         if submitted > 0 || skipped > 0 {
                             info!(submitted, admitted, skipped, "final submission batch");
                         }
@@ -653,12 +723,11 @@ impl WorkerEngine {
                         consecutive_failures = 0;
                     }
 
-                    send_status(&state, &config, round, &local_pool, &known, &active_strategy_id, &event_tx);
+                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx);
                 }
             }
         }
     }
-}
 
 /// Score raw discoveries, deduplicate by canonical CID, and forward to viz.
 fn score_and_dedup(
@@ -805,7 +874,184 @@ fn build_config(k: u32, ell: u32, n: u32, patch: &EngineConfigPatch) -> EngineCo
         max_known_cids: 10_000,
         noise_flips,
         init_mode,
+        strategy_id: patch.strategy.clone(),
         strategy_config: patch.strategy_config.clone().unwrap_or(serde_json::json!({})),
         server_url: patch.server_url.clone().unwrap_or_else(|| "http://localhost:3001".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ramseynet_graph::AdjacencyMatrix;
+    use ramseynet_types::GraphCid;
+
+    fn test_cid(byte: u8) -> GraphCid {
+        GraphCid([byte; 32])
+    }
+
+    fn make_score(t1_max: u64, t1_min: u64, gap: u64, aut: f64, cid_byte: u8) -> GraphScore {
+        GraphScore::from_threshold(t1_max, t1_min, gap, aut, test_cid(cid_byte))
+    }
+
+    fn make_discovery(t1_max: u64, t1_min: u64, gap: u64, aut: f64, cid_byte: u8) -> LocalDiscovery {
+        LocalDiscovery {
+            graph: AdjacencyMatrix::new(5),
+            score: make_score(t1_max, t1_min, gap, aut, cid_byte),
+            cid: test_cid(cid_byte),
+        }
+    }
+
+    // ── AdmissionThreshold tests ─────────────────────────
+
+    #[test]
+    fn open_threshold_admits_everything() {
+        let threshold = AdmissionThreshold::open();
+        let score = make_score(100, 50, 10, 1.0, 0x01);
+        assert!(threshold.would_admit(&score));
+    }
+
+    #[test]
+    fn full_threshold_rejects_worse() {
+        let worst = make_score(10, 5, 2, 10.0, 0xFF);
+        let threshold = AdmissionThreshold {
+            worst_score: Some(worst),
+        };
+
+        // Better T1 — should admit
+        let better = make_score(5, 3, 0, 1.0, 0x01);
+        assert!(threshold.would_admit(&better));
+
+        // Same T1 but worse gap — should reject
+        let worse = make_score(10, 5, 5, 10.0, 0xFE);
+        assert!(!threshold.would_admit(&worse));
+
+        // Same everything, worse CID — should reject
+        let same_but_worse_cid = make_score(10, 5, 2, 10.0, 0xFF);
+        assert!(!threshold.would_admit(&same_but_worse_cid));
+    }
+
+    #[test]
+    fn from_threshold_constructs_correctly() {
+        let score = GraphScore::from_threshold(10, 5, 3, 120.0, test_cid(0x42));
+        // Verify the tier1 tuple is set correctly
+        assert_eq!(score.c_omega.max(score.c_alpha), 10);
+        assert_eq!(score.c_omega.min(score.c_alpha), 5);
+        assert_eq!(score.goodman_gap, 3);
+        assert_eq!(score.aut_order, 120.0);
+    }
+
+    // ── KnownCids tests ─────────────────────────────────
+
+    #[test]
+    fn known_cids_basic_operations() {
+        let mut known = KnownCids::new();
+        assert!(known.is_empty());
+
+        let cid = test_cid(0x01);
+        known.insert(cid.clone());
+        assert_eq!(known.len(), 1);
+        assert!(known.contains(&cid));
+        assert!(!known.contains(&test_cid(0x02)));
+    }
+
+    #[test]
+    fn known_cids_snapshot_trimmed() {
+        let mut known = KnownCids::new();
+        for i in 0..20u8 {
+            known.insert(test_cid(i));
+        }
+        assert_eq!(known.len(), 20);
+
+        let trimmed = known.snapshot_trimmed(10);
+        assert_eq!(trimmed.len(), 10);
+
+        let full = known.snapshot_trimmed(100);
+        assert_eq!(full.len(), 20);
+    }
+
+    #[test]
+    fn known_cids_add_from_hex() {
+        let mut known = KnownCids::new();
+        let hex = test_cid(0x42).to_hex();
+        known.add_from_hex(std::slice::from_ref(&hex));
+        assert_eq!(known.len(), 1);
+
+        // Adding same hex again should not duplicate
+        known.add_from_hex(std::slice::from_ref(&hex));
+        assert_eq!(known.len(), 1);
+
+        // Invalid hex should be ignored
+        known.add_from_hex(&["not_valid_hex".to_string()]);
+        assert_eq!(known.len(), 1);
+    }
+
+    #[test]
+    fn known_cids_clear() {
+        let mut known = KnownCids::new();
+        known.insert(test_cid(0x01));
+        known.insert(test_cid(0x02));
+        assert_eq!(known.len(), 2);
+        known.clear();
+        assert!(known.is_empty());
+    }
+
+    // ── feed_local_pool tests ────────────────────────────
+
+    #[test]
+    fn local_pool_sorted_insert() {
+        let mut pool: Vec<LocalDiscovery> = Vec::new();
+        let d1 = make_discovery(10, 5, 2, 10.0, 0x01); // worse
+        let d2 = make_discovery(5, 3, 0, 10.0, 0x02); // better T1
+        let d3 = make_discovery(5, 3, 1, 10.0, 0x03); // same T1, worse gap
+
+        feed_local_pool(std::slice::from_ref(&d1), &mut pool, 10, false);
+        feed_local_pool(std::slice::from_ref(&d2), &mut pool, 10, false);
+        feed_local_pool(std::slice::from_ref(&d3), &mut pool, 10, false);
+
+        assert_eq!(pool.len(), 3);
+        // Best should be first (lowest T1, lowest gap)
+        assert_eq!(pool[0].cid, test_cid(0x02)); // d2: (5,3) gap=0
+        assert_eq!(pool[1].cid, test_cid(0x03)); // d3: (5,3) gap=1
+        assert_eq!(pool[2].cid, test_cid(0x01)); // d1: (10,5) gap=2
+    }
+
+    #[test]
+    fn local_pool_capacity_enforced() {
+        let mut pool: Vec<LocalDiscovery> = Vec::new();
+        let cap = 3;
+
+        for i in 0..5u8 {
+            let d = make_discovery(i as u64, i as u64, 0, 1.0, i);
+            feed_local_pool(std::slice::from_ref(&d), &mut pool, cap, false);
+        }
+
+        assert_eq!(pool.len(), cap);
+        // Best 3 should survive (i=0, 1, 2)
+        assert_eq!(pool[0].cid, test_cid(0));
+        assert_eq!(pool[1].cid, test_cid(1));
+        assert_eq!(pool[2].cid, test_cid(2));
+    }
+
+    #[test]
+    fn local_pool_cid_dedup() {
+        let mut pool: Vec<LocalDiscovery> = Vec::new();
+        let d1 = make_discovery(5, 3, 0, 10.0, 0x01);
+        let d2 = make_discovery(5, 3, 0, 10.0, 0x01); // same CID
+
+        feed_local_pool(std::slice::from_ref(&d1), &mut pool, 10, false);
+        feed_local_pool(std::slice::from_ref(&d2), &mut pool, 10, false);
+
+        assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn local_pool_skips_server_mode() {
+        let mut pool: Vec<LocalDiscovery> = Vec::new();
+        let d = make_discovery(5, 3, 0, 10.0, 0x01);
+
+        feed_local_pool(std::slice::from_ref(&d), &mut pool, 10, true);
+
+        assert_eq!(pool.len(), 0); // should not add
     }
 }

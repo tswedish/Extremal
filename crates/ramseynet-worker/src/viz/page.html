@@ -513,6 +513,46 @@ header h1 {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* ── Metrics panel ─────────────────────────────────── */
+.metrics-bar {
+  display: flex;
+  gap: 16px;
+  padding: 6px 20px;
+  background: #0c0c14;
+  border-bottom: 1px solid #1a1a2a;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 11px;
+}
+.metric {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #666680;
+}
+.metric-val {
+  color: #c0c0d0;
+  font-weight: 600;
+}
+.metric-val.warn { color: #f59e0b; }
+.metric-val.danger { color: #ef4444; }
+.metric-sep {
+  width: 1px;
+  height: 14px;
+  background: #2a2a3a;
+}
+.clear-btn {
+  background: #1a1a2a;
+  border: 1px solid #2a2a3a;
+  color: #8888a0;
+  font-size: 9px;
+  font-family: inherit;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.clear-btn:hover { border-color: #ef4444; color: #ef4444; }
 </style>
 </head>
 <body>
@@ -585,6 +625,23 @@ header h1 {
       <input type="checkbox" id="ctrl-no-backoff">
     </div>
   </div>
+</div>
+<div class="metrics-bar" id="metrics-bar">
+  <span class="metric">Round: <span class="metric-val" id="m-round">0</span></span>
+  <span class="metric-sep"></span>
+  <span class="metric">Discoveries: <span class="metric-val" id="m-discoveries">0</span></span>
+  <span class="metric">Submitted: <span class="metric-val" id="m-submitted">0</span></span>
+  <span class="metric">Admitted: <span class="metric-val" id="m-admitted">0</span></span>
+  <span class="metric-sep"></span>
+  <span class="metric">CID Cache: <span class="metric-val" id="m-known">0</span> <button class="clear-btn" onclick="sendCommand({type:'clear_known_cids'})" title="Clear CID dedup cache">clear</button></span>
+  <span class="metric">Local Pool: <span class="metric-val" id="m-pool">0</span> <button class="clear-btn" onclick="sendCommand({type:'clear_local_pool'})" title="Clear local discovery pool">clear</button></span>
+  <span class="metric-sep"></span>
+  <span class="metric">Last round: <span class="metric-val" id="m-round-ms">--</span>ms</span>
+  <span class="metric">Score: <span class="metric-val" id="m-score-ms">--</span>ms</span>
+  <span class="metric">Submit: <span class="metric-val" id="m-submit-ms">--</span>ms</span>
+  <span class="metric-sep"></span>
+  <span class="metric">Server: <span class="metric-val" id="m-server">--</span></span>
+  <span class="metric">Leaderboard: <span class="metric-val" id="m-lb-total">--</span></span>
 </div>
 <div class="stats-bar" id="stats-bar">
   <div class="stat"><span class="stat-label">Strategy</span><span class="stat-value" id="s-strategy">--</span></div>
@@ -1282,6 +1339,29 @@ function handleStatus(msg) {
   if (msg.k != null) $('ctrl-k').value = msg.k;
   if (msg.ell != null) $('ctrl-ell').value = msg.ell;
   if (msg.n != null) $('ctrl-n').value = msg.n;
+
+  // Update metrics
+  if (msg.metrics) {
+    var m = msg.metrics;
+    $('m-round').textContent = msg.round || 0;
+    $('m-discoveries').textContent = m.total_discoveries || 0;
+    $('m-submitted').textContent = m.total_submitted || 0;
+    $('m-admitted').textContent = m.total_admitted || 0;
+
+    var knownEl = $('m-known');
+    knownEl.textContent = formatNum(m.known_cids_count || 0);
+    knownEl.className = 'metric-val' + (m.known_cids_count > 50000 ? ' danger' : m.known_cids_count > 10000 ? ' warn' : '');
+
+    var poolEl = $('m-pool');
+    poolEl.textContent = m.local_pool_size || 0;
+
+    $('m-round-ms').textContent = m.last_round_ms || '--';
+    $('m-score-ms').textContent = m.last_scoring_ms || '--';
+    $('m-submit-ms').textContent = m.last_submit_ms || '--';
+    $('m-server').textContent = m.server_connected ? 'online' : 'offline';
+    $('m-server').className = 'metric-val' + (m.server_connected ? '' : ' warn');
+    $('m-lb-total').textContent = m.leaderboard_total || 0;
+  }
 
   // Auto-collapse controls when searching, expand when idle
   var panel = $('control-panel');
