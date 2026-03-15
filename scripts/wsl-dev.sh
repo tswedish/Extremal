@@ -51,10 +51,10 @@ case "$cmd" in
     pnpm build
     ;;
   web-dev)
-    echo "=== Starting web dev server on :5173 ==="
+    echo "=== Starting web dev server ==="
     cd web
     pnpm install --silent
-    pnpm dev
+    pnpm dev "$@"
     ;;
   ci)
     echo "=== Full CI suite ==="

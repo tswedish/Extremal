@@ -104,6 +104,10 @@ pub struct ThresholdInfo {
 impl Ledger {
     /// Try to admit a graph to the (k, ell, n) leaderboard.
     /// Returns the entry if admitted, None if rejected.
+    ///
+    /// The entire admission (check + insert + rank recompute) runs inside
+    /// a single SQLite transaction for atomicity and to avoid per-statement
+    /// fsync overhead.
     pub fn try_admit(
         &self,
         k: u32,
@@ -113,10 +117,13 @@ impl Ledger {
         score: &AdmitScore,
     ) -> Result<Option<LeaderboardEntry>, LedgerError> {
         let (k, ell) = canonical(k, ell);
-        let conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap();
+
+        // Run the entire admission in a single transaction
+        let tx = conn.transaction().map_err(LedgerError::Db)?;
 
         // Check for duplicate
-        let exists: bool = conn
+        let exists: bool = tx
             .query_row(
                 "SELECT COUNT(*) FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
                 params![k, ell, n, graph_cid],
@@ -126,8 +133,8 @@ impl Ledger {
             .unwrap_or(false);
 
         if exists {
-            // Already on the board — return existing entry
-            let entry = conn.query_row(
+            // Already on the board — return existing entry (no commit needed, read-only)
+            let entry = tx.query_row(
                 "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
                 params![k, ell, n, graph_cid],
                 |row| {
@@ -149,7 +156,7 @@ impl Ledger {
             return Ok(Some(entry));
         }
 
-        let count: u32 = conn.query_row(
+        let count: u32 = tx.query_row(
             "SELECT COUNT(*) FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3",
             params![k, ell, n],
             |row| row.get(0),
@@ -158,7 +165,7 @@ impl Ledger {
         // If full, check against worst entry
         if count >= self.capacity {
             // Get the worst entry (highest rank number)
-            let worst = conn.query_row(
+            let worst = tx.query_row(
                 "SELECT tier1_max, tier1_min, goodman_gap, tier2_aut, tier3_cid, graph_cid FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 ORDER BY rank DESC LIMIT 1",
                 params![k, ell, n],
                 |row| {
@@ -192,7 +199,7 @@ impl Ledger {
             }
 
             // Delete the worst entry
-            conn.execute(
+            tx.execute(
                 "DELETE FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
                 params![k, ell, n, worst.5],
             )?;
@@ -200,7 +207,7 @@ impl Ledger {
 
         // Insert the new entry (with temporary rank=capacity, will be recomputed)
         let now = Utc::now();
-        conn.execute(
+        tx.execute(
             "INSERT INTO leaderboard (k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, tier3_cid, score_json, admitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 k, ell, n, graph_cid,
@@ -216,10 +223,10 @@ impl Ledger {
         )?;
 
         // Recompute ranks for this (k, ell, n) leaderboard
-        recompute_ranks(&conn, k, ell, n)?;
+        recompute_ranks(&tx, k, ell, n)?;
 
-        // Return the admitted entry
-        let entry = conn.query_row(
+        // Read the admitted entry before committing
+        let entry = tx.query_row(
             "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
             params![k, ell, n, graph_cid],
             |row| {
@@ -238,6 +245,8 @@ impl Ledger {
                 })
             },
         )?;
+
+        tx.commit().map_err(LedgerError::Db)?;
 
         Ok(Some(entry))
     }
@@ -593,8 +602,10 @@ fn canonical(k: u32, ell: u32) -> (u32, u32) {
 }
 
 /// Recompute ranks for a (k, ell, n) leaderboard by fetching all entries,
-/// sorting in Rust, and writing ranks back. At 10k entries this is still
-/// fast (~ms) since it's a single scan + in-memory sort + batch update.
+/// sorting in Rust, and writing ranks back with a single prepared statement.
+///
+/// Callers should ensure this runs inside a transaction for atomicity and
+/// to avoid per-statement fsync overhead.
 pub(crate) fn recompute_ranks(
     conn: &rusqlite::Connection,
     k: u32,
@@ -616,14 +627,18 @@ pub(crate) fn recompute_ranks(
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
 
     entries.sort_by(|a, b| score_cmp(a.1, a.2, a.3, a.4, &a.5, b.1, b.2, b.3, b.4, &b.5));
 
+    // Batch update: prepare once, execute N times. Inside a transaction
+    // this avoids per-statement fsync overhead — the entire batch is
+    // flushed on commit.
+    let mut update_stmt = conn.prepare(
+        "UPDATE leaderboard SET rank=?1 WHERE k=?2 AND ell=?3 AND n=?4 AND graph_cid=?5",
+    )?;
     for (rank, entry) in entries.iter().enumerate() {
-        conn.execute(
-            "UPDATE leaderboard SET rank=?1 WHERE k=?2 AND ell=?3 AND n=?4 AND graph_cid=?5",
-            params![rank as u32 + 1, k, ell, n, entry.0],
-        )?;
+        update_stmt.execute(params![rank as u32 + 1, k, ell, n, entry.0])?;
     }
     Ok(())
 }

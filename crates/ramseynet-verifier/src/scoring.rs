@@ -162,15 +162,31 @@ pub struct ScoreResult {
 /// labeling via nauty (single call). The CID used in the score is computed
 /// from the **canonical** form.
 pub fn compute_score_canonical(graph: &AdjacencyMatrix) -> ScoreResult {
+    let (canonical_graph, aut_order) = canonical_form(graph);
+    let canonical_cid = ramseynet_graph::compute_cid(&canonical_graph);
+    let score = compute_score_with_canonical(graph, aut_order, canonical_cid);
+    ScoreResult {
+        score,
+        canonical_graph,
+    }
+}
+
+/// Compute the full 4-tier score for a graph when the canonical form has
+/// already been computed. This avoids a redundant nauty call.
+///
+/// `aut_order` and `canonical_cid` should come from a prior `canonical_form()` call.
+pub fn compute_score_with_canonical(
+    graph: &AdjacencyMatrix,
+    aut_order: f64,
+    canonical_cid: GraphCid,
+) -> GraphScore {
     let (omega, c_omega) = count_max_cliques(graph);
     let comp = graph.complement();
     let (alpha, c_alpha) = count_max_cliques(&comp);
     let triangles = count_cliques(graph, 3);
     let triangles_complement = count_cliques(&comp, 3);
-    let (canonical_graph, aut_order) = canonical_form(graph);
 
-    let canonical_cid = ramseynet_graph::compute_cid(&canonical_graph);
-    let score = GraphScore::new(
+    GraphScore::new(
         graph.n(),
         omega,
         alpha,
@@ -180,12 +196,7 @@ pub fn compute_score_canonical(graph: &AdjacencyMatrix) -> ScoreResult {
         triangles_complement,
         aut_order,
         canonical_cid,
-    );
-
-    ScoreResult {
-        score,
-        canonical_graph,
-    }
+    )
 }
 
 /// Compute the full 4-tier score for a graph (legacy: uses provided CID).

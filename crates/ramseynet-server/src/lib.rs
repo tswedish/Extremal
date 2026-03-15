@@ -9,7 +9,7 @@ use axum::{
 use ramseynet_graph::{compute_cid, rgxf, RgxfJson};
 use ramseynet_ledger::{AdmitScore, Ledger, LedgerError};
 use ramseynet_types::RamseyParams;
-use ramseynet_verifier::scoring::compute_score_canonical;
+use ramseynet_verifier::scoring::compute_score_with_canonical;
 use ramseynet_verifier::{canonical_form, verify_ramsey, VerifyRequest, VerifyResponse};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -310,7 +310,8 @@ async fn submit_graph(
     // 2. Compute canonical form and canonical CID
     //    The canonical CID is isomorphism-invariant: two isomorphic graphs
     //    produce the same CID and are treated as duplicates.
-    let (canonical_adj, _aut_order) = canonical_form(&adj);
+    //    The aut_order is reused in step 6 to avoid a redundant nauty call.
+    let (canonical_adj, aut_order) = canonical_form(&adj);
     let canonical_cid = compute_cid(&canonical_adj);
     let cid_hex = canonical_cid.to_hex();
 
@@ -384,18 +385,17 @@ async fn submit_graph(
     let mut score_json: Option<Value> = None;
 
     if verdict_str == "accepted" {
-        // Score uses canonical form — nauty is called once (already done above
-        // for canonical_form, but compute_score_canonical does its own call
-        // to get clique counts too). This is correct since clique counts are
-        // isomorphism-invariant.
+        // Reuse the canonical form + aut_order from step 2 to avoid a
+        // redundant nauty call. Only the clique counting runs here.
         let adj2 = adj.clone();
-        let score_result = tokio::task::spawn_blocking(move || {
-            compute_score_canonical(&adj2)
+        let cid_for_score = canonical_cid.clone();
+        let graph_score = tokio::task::spawn_blocking(move || {
+            compute_score_with_canonical(&adj2, aut_order, cid_for_score)
         })
         .await
         .unwrap();
 
-        let graph_score = &score_result.score;
+        let graph_score = &graph_score;
 
         let admit_score = AdmitScore {
             tier1_max: graph_score.c_omega.max(graph_score.c_alpha),
