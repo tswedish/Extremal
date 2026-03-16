@@ -3,7 +3,7 @@
 Living document for developing new search strategies, running them against prod,
 and evolving toward agentic strategy iteration.
 
-**Status:** Phase 1 — Tree2 + EvoSearch implemented, testing against R(5,5) n=25
+**Status:** Phase 1 — Tree2 winning 4.6x over tree1 on R(5,5) n=25. Iterating.
 
 ---
 
@@ -166,6 +166,26 @@ Visible with `RUST_LOG=ramseynet_strategies=debug` or `./run search -v`.
 | **v3** | Adaptive beam width (widen on score plateaus, narrow when one dominates) | Better resource allocation |
 | **v4** | Carry state across rounds (persist beam as population) | Continuous improvement like evo |
 | **v5** | Hybrid: beam search to find valid graphs, then SA refinement within valid space | Optimize score tiers, not just find valid graphs |
+
+### Experiment 1 Results: tree vs tree2 (2026-03-15)
+
+Duration ~4.5 hours, R(5,5) n=25, both `--init leaderboard`, release mode.
+
+| Metric | tree | tree2 | Ratio |
+|--------|------|-------|-------|
+| Rounds completed | 373 | 2,109 | **5.7x** |
+| Round time | ~5,000ms | ~440ms | **11x faster** |
+| Total discoveries | 1.5M | 8.7M | **5.7x** |
+| Leaderboard admits | 1,051 | 4,885 | **4.6x** |
+| Admission rate | 54% | 76% | tree2 higher |
+| Discoveries/round | ~4,080 | ~3,920 | ~same |
+
+**Conclusion:** Tree2 v0 is a decisive improvement. The incremental delta approach
+delivers ~11x faster rounds and 4.6x more leaderboard admissions. The higher
+admission rate (76% vs 54%) suggests tree2 finds more diverse graphs, not just
+more of the same. Next priority: score optimization and diversity-aware beam
+selection, since the leaderboard threshold is now high enough that finding
+*any* valid graph is less useful than finding *better-scoring* ones.
 
 ---
 
