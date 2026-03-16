@@ -169,6 +169,94 @@ Visible with `RUST_LOG=ramseynet_strategies=debug` or `./run search -v`.
 
 ---
 
+## Competitive Iteration Framework
+
+The core development loop: iteratively build better strategies by pitting them
+against each other at the current frontier. Each experiment produces a "loss
+gradient" — concrete data on what works and what doesn't, which informs the
+next strategy modification.
+
+### Methodology
+
+1. **Run two workers** (strategy A vs B) against the same server/leaderboard
+2. **Collect structured logs** (`round_summary` lines) over 30-60 minutes
+3. **Compare key metrics**: discoveries/min, admissions/min, best score
+4. **Analyze** what the winning strategy does differently
+5. **Modify** the losing strategy (or create a new variant)
+6. **Repeat**
+
+### Key Metrics (from `round_summary` log lines)
+
+| Metric | What it means | How to compute |
+|--------|--------------|----------------|
+| **Discoveries/min** | Valid graphs found per wall-minute | `total_discoveries / elapsed_minutes` |
+| **Admissions/min** | Graphs admitted to leaderboard per wall-minute | `total_admitted / elapsed_minutes` |
+| **Admission rate** | Fraction of submissions that get admitted | `total_admitted / total_submitted` |
+| **Round time** | How long each search round takes | `elapsed_ms` per round_summary |
+| **Depth efficiency** (tree2) | Per-depth-level stats from debug logs | grep `tree2: depth complete` |
+
+### Analyzing Experiment Logs
+
+```bash
+# Extract round summaries for a specific strategy
+grep 'round_summary' logs/worker-tree-*.log
+
+# Count total admissions
+grep -c 'admitted to leaderboard' logs/worker-tree-*.log
+
+# Compare discoveries/min between two runs
+grep 'round_summary' logs/worker-tree-*.log | tail -1
+grep 'round_summary' logs/worker-tree2-*.log | tail -1
+
+# Tree2 depth-level analysis (run worker with -v)
+grep 'tree2: depth complete' logs/worker-tree2-*.log
+```
+
+### Leaderboard Sizing Decisions
+
+| Leaderboard Size | When to use | Effect on competition |
+|-----------------|-------------|----------------------|
+| **50** | Early development, quick feedback | Threshold rises fast; only the best graphs survive. Good for testing score optimization. |
+| **500** (current default) | Standard competition | Healthy balance — enough room for diversity, but threshold is meaningful. |
+| **5,000+** | Populating a new (k,ell,n) target | Easy admission, good for collecting diverse valid graphs. Tighten later. |
+
+**When to grow:** If admission rate drops below ~5% for both strategies, the
+leaderboard is saturated and neither strategy is improving. Options:
+- Increase leaderboard capacity (more room at the bottom)
+- Switch to a harder target (larger n)
+- Focus on score optimization rather than finding new valid graphs
+
+**When to shrink:** If the leaderboard has many low-quality entries from the
+initial flood, shrink it to force strategies to compete on quality. The server
+trims automatically on restart with `--leaderboard-capacity N`.
+
+### Running an Experiment
+
+```bash
+# 1. Start the server (release mode, port 3002)
+./run server --release --port 3002
+
+# 2. Start worker A (tree, logging to file)
+./run search --release --strategy tree --k 5 --ell 5 --n 25 \
+  --server http://localhost:3002 --init leaderboard --port 8080 \
+  2>&1 | tee logs/worker-tree-$(date +%Y%m%d-%H%M%S).log &
+
+# 3. Start worker B (tree2, logging to file)
+./run search --release --strategy tree2 --k 5 --ell 5 --n 25 \
+  --server http://localhost:3002 --init leaderboard --port 8081 \
+  2>&1 | tee logs/worker-tree2-$(date +%Y%m%d-%H%M%S).log &
+
+# 4. Watch dashboards
+#    tree:  http://localhost:8080
+#    tree2: http://localhost:8081
+
+# 5. After 30-60 min, Ctrl+C both workers and analyze:
+grep 'round_summary' logs/worker-tree-*.log | tail -5
+grep 'round_summary' logs/worker-tree2-*.log | tail -5
+```
+
+---
+
 ## Phase 2: Evaluation Harness
 
 Build tooling to compare strategies objectively before running against prod.

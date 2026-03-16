@@ -747,9 +747,15 @@ pub async fn run_engine(
 
                     // ── Log results ──────────────────────────────────
                     if !scored.is_empty() {
-                        info!(strategy = %strategy_id, target_n, iterations = result.iterations_used,
-                            elapsed_ms = elapsed.as_millis() as u64, discoveries = scored.len(),
-                            local_pool = local_pool.len(), "search completed with discoveries");
+                        info!(strategy = %strategy_id, target_n, round,
+                            iterations = result.iterations_used,
+                            elapsed_ms = elapsed.as_millis() as u64,
+                            discoveries = scored.len(),
+                            total_discoveries = metrics.total_discoveries,
+                            total_admitted = metrics.total_admitted,
+                            total_submitted = metrics.total_submitted,
+                            local_pool = local_pool.len(),
+                            "round_summary");
                     } else if result.valid {
                         info!(strategy = %strategy_id, target_n, iterations = result.iterations_used,
                             elapsed_ms = elapsed.as_millis() as u64, "found valid graph (all duplicates)");
