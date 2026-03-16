@@ -240,6 +240,7 @@ impl SearchObserver for EngineObserver {
 ///
 /// If `initial_config` is `Some`, auto-starts searching. Otherwise
 /// starts in idle state waiting for a Start command from the UI.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_engine(
     initial_config: Option<EngineConfig>,
     strategies: Vec<Arc<dyn SearchStrategy>>,
@@ -248,6 +249,7 @@ pub async fn run_engine(
     mut cmd_rx: mpsc::Receiver<WorkerCommand>,
     event_tx: mpsc::Sender<WorkerEvent>,
     default_server_url: String,
+    signing_key_id: Option<String>,
 ) -> Result<(), WorkerError> {
     let mut rng = SmallRng::from_entropy();
     let mut pool_rng = SmallRng::from_entropy();
@@ -320,7 +322,11 @@ pub async fn run_engine(
             "auto-starting search from CLI args"
         );
         if !cfg.offline {
-            client = Some(ServerClient::new(&cfg.server_url));
+            let mut c = ServerClient::new(&cfg.server_url);
+            if let Some(ref kid) = signing_key_id {
+                c.set_key_id(kid.clone());
+            }
+            client = Some(c);
         }
         active_strategy_id = cfg
             .strategy_id
@@ -366,7 +372,11 @@ pub async fn run_engine(
                                 info!(k, ell, n, "received start command");
                                 let cfg = build_config(k, ell, n, &patch, &default_server_url);
                                 if !cfg.offline {
-                                    client = Some(ServerClient::new(&cfg.server_url));
+                                    let mut c = ServerClient::new(&cfg.server_url);
+                                    if let Some(ref kid) = signing_key_id {
+                                        c.set_key_id(kid.clone());
+                                    }
+                                    client = Some(c);
                                 } else {
                                     client = None;
                                 }

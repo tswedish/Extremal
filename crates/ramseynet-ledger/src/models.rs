@@ -38,6 +38,7 @@ pub struct LeaderboardEntry {
     pub goodman_gap: u64,
     pub tier2_aut: f64,
     pub score_json: String,
+    pub key_id: Option<String>,
     pub admitted_at: DateTime<Utc>,
 }
 

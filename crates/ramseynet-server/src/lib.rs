@@ -284,6 +284,12 @@ struct SubmitRequest {
     ell: u32,
     n: u32,
     graph: RgxfJson,
+    /// Optional signing key ID (first 16 hex chars of SHA-256 of public key).
+    key_id: Option<String>,
+    /// Optional Ed25519 signature over the canonical submission payload.
+    #[serde(default)]
+    #[allow(dead_code)] // Will be used for signature verification in Phase 2
+    signature: Option<String>,
 }
 
 /// Full lifecycle: verify + canonicalize + store + leaderboard admission.
@@ -353,6 +359,7 @@ async fn submit_graph(
     let verdict2 = verdict_str.clone();
     let reason = vsr.reason.clone();
     let witness = vsr.witness.clone();
+    let submitted_key_id = req.key_id.clone();
     let (is_duplicate, lb_entry) = tokio::task::spawn_blocking(move || {
         ledger.submit_and_admit(
             k,
@@ -364,6 +371,7 @@ async fn submit_graph(
             reason.as_deref(),
             witness.as_deref(),
             admit_score.as_ref(),
+            submitted_key_id.as_deref(),
         )
     })
     .await
@@ -420,6 +428,7 @@ async fn submit_graph(
             "admitted": admitted,
             "rank": rank,
             "score": score_json,
+            "key_id": req.key_id,
         })),
     ))
 }

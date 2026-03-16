@@ -91,6 +91,7 @@ impl Ledger {
         reason: Option<&str>,
         witness: Option<&[u32]>,
         score: Option<&AdmitScore>,
+        key_id: Option<&str>,
     ) -> Result<(bool, Option<LeaderboardEntry>), LedgerError> {
         let (k, ell) = canonical(k, ell);
         let mut conn = self.conn.lock().unwrap();
@@ -100,8 +101,8 @@ impl Ledger {
 
         // 1. Store submission (detect duplicate)
         let is_duplicate = match tx.execute(
-            "INSERT INTO graph_submissions (graph_cid, k, ell, n, rgxf_json, submitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![graph_cid, k, ell, n, rgxf_json, now_str],
+            "INSERT INTO graph_submissions (graph_cid, k, ell, n, rgxf_json, key_id, submitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![graph_cid, k, ell, n, rgxf_json, key_id, now_str],
         ) {
             Ok(_) => false,
             Err(rusqlite::Error::SqliteFailure(err, _))
@@ -123,7 +124,7 @@ impl Ledger {
 
         // 3. Try to admit (only if accepted and score provided)
         let entry = if let Some(score) = score {
-            self.admit_in_tx(&tx, k, ell, n, graph_cid, score, &now_str)?
+            self.admit_in_tx(&tx, k, ell, n, graph_cid, score, &now_str, key_id)?
         } else {
             None
         };
@@ -143,6 +144,7 @@ impl Ledger {
         graph_cid: &str,
         score: &AdmitScore,
         now_str: &str,
+        key_id: Option<&str>,
     ) -> Result<Option<LeaderboardEntry>, LedgerError> {
         // Duplicate check on leaderboard
         let exists: bool = tx
@@ -156,7 +158,7 @@ impl Ledger {
 
         if exists {
             let entry = tx.query_row(
-                "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
+                "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, key_id, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
                 params![k, ell, n, graph_cid],
                 |row: &rusqlite::Row<'_>| {
                     Ok(LeaderboardEntry {
@@ -170,7 +172,8 @@ impl Ledger {
                         goodman_gap: row.get::<_, i64>(7)? as u64,
                         tier2_aut: row.get(8)?,
                         score_json: row.get(9)?,
-                        admitted_at: parse_datetime(row.get::<_, String>(10)?),
+                        key_id: row.get(10)?,
+                        admitted_at: parse_datetime(row.get::<_, String>(11)?),
                     })
                 },
             )?;
@@ -224,7 +227,7 @@ impl Ledger {
         }
 
         tx.execute(
-            "INSERT INTO leaderboard (k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, tier3_cid, score_json, admitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO leaderboard (k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, tier3_cid, score_json, key_id, admitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 k, ell, n, graph_cid,
                 self.capacity,
@@ -234,6 +237,7 @@ impl Ledger {
                 score.tier2_aut,
                 score.tier3_cid,
                 score.score_json,
+                key_id,
                 now_str
             ],
         )?;
@@ -241,7 +245,7 @@ impl Ledger {
         recompute_ranks(tx, k, ell, n)?;
 
         let entry = tx.query_row(
-            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
+            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, key_id, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
             params![k, ell, n, graph_cid],
             |row: &rusqlite::Row<'_>| {
                 Ok(LeaderboardEntry {
@@ -255,7 +259,8 @@ impl Ledger {
                     goodman_gap: row.get::<_, i64>(7)? as u64,
                     tier2_aut: row.get(8)?,
                     score_json: row.get(9)?,
-                    admitted_at: parse_datetime(row.get::<_, String>(10)?),
+                    key_id: row.get(10)?,
+                    admitted_at: parse_datetime(row.get::<_, String>(11)?),
                 })
             },
         )?;
@@ -324,7 +329,7 @@ impl Ledger {
         if exists {
             // Already on the board — return existing entry (no commit needed, read-only)
             let entry = tx.query_row(
-                "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
+                "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, key_id, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
                 params![k, ell, n, graph_cid],
                 |row| {
                     Ok(LeaderboardEntry {
@@ -338,7 +343,8 @@ impl Ledger {
                         goodman_gap: row.get::<_, i64>(7)? as u64,
                         tier2_aut: row.get(8)?,
                         score_json: row.get(9)?,
-                        admitted_at: parse_datetime(row.get::<_, String>(10)?),
+                        key_id: row.get(10)?,
+                        admitted_at: parse_datetime(row.get::<_, String>(11)?),
                     })
                 },
             )?;
@@ -416,7 +422,7 @@ impl Ledger {
 
         // Read the admitted entry before committing
         let entry = tx.query_row(
-            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
+            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, key_id, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 AND graph_cid=?4",
             params![k, ell, n, graph_cid],
             |row| {
                 Ok(LeaderboardEntry {
@@ -430,7 +436,8 @@ impl Ledger {
                     goodman_gap: row.get::<_, i64>(7)? as u64,
                     tier2_aut: row.get(8)?,
                     score_json: row.get(9)?,
-                    admitted_at: parse_datetime(row.get::<_, String>(10)?),
+                    key_id: row.get(10)?,
+                    admitted_at: parse_datetime(row.get::<_, String>(11)?),
                 })
             },
         )?;
@@ -499,7 +506,7 @@ impl Ledger {
         let (k, ell) = canonical(k, ell);
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 ORDER BY rank",
+            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, key_id, admitted_at FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 ORDER BY rank",
         )?;
         let rows = stmt.query_map(params![k, ell, n], |row| {
             Ok(LeaderboardEntry {
@@ -513,7 +520,8 @@ impl Ledger {
                 goodman_gap: row.get::<_, i64>(7)? as u64,
                 tier2_aut: row.get(8)?,
                 score_json: row.get(9)?,
-                admitted_at: parse_datetime(row.get::<_, String>(10)?),
+                key_id: row.get(10)?,
+                admitted_at: parse_datetime(row.get::<_, String>(11)?),
             })
         })?;
         let mut entries = Vec::new();
@@ -542,7 +550,7 @@ impl Ledger {
         )?;
 
         let mut stmt = conn.prepare(
-            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at \
+            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, key_id, admitted_at \
              FROM leaderboard WHERE k=?1 AND ell=?2 AND n=?3 ORDER BY rank LIMIT ?4 OFFSET ?5",
         )?;
         let rows = stmt.query_map(params![k, ell, n, limit, offset], |row| {
@@ -557,7 +565,8 @@ impl Ledger {
                 goodman_gap: row.get::<_, i64>(7)? as u64,
                 tier2_aut: row.get(8)?,
                 score_json: row.get(9)?,
-                admitted_at: parse_datetime(row.get::<_, String>(10)?),
+                key_id: row.get(10)?,
+                admitted_at: parse_datetime(row.get::<_, String>(11)?),
             })
         })?;
         let mut entries = Vec::new();
@@ -755,7 +764,7 @@ impl Ledger {
         // 3. Get leaderboard entry (optional — may not be admitted)
         let lb_entry: Option<LeaderboardEntry> = conn
             .query_row(
-                "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, admitted_at FROM leaderboard WHERE graph_cid = ?1 LIMIT 1",
+                "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, key_id, admitted_at FROM leaderboard WHERE graph_cid = ?1 LIMIT 1",
                 params![cid],
                 |row| {
                     Ok(LeaderboardEntry {
@@ -769,7 +778,8 @@ impl Ledger {
                         goodman_gap: row.get::<_, i64>(7)? as u64,
                         tier2_aut: row.get(8)?,
                         score_json: row.get(9)?,
-                        admitted_at: parse_datetime(row.get::<_, String>(10)?),
+                        key_id: row.get(10)?,
+                        admitted_at: parse_datetime(row.get::<_, String>(11)?),
                     })
                 },
             )

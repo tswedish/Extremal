@@ -162,6 +162,11 @@ struct Cli {
     /// Maximum search depth for tree search
     #[arg(long, default_value = "10")]
     max_depth: u32,
+
+    /// Path to MineGraph signing key (JSON file with key_id + secret_key).
+    /// If not provided, checks .config/minegraph/key.json in the current directory.
+    #[arg(long)]
+    signing_key: Option<String>,
 }
 
 #[tokio::main]
@@ -293,6 +298,14 @@ async fn main() -> Result<()> {
         None
     };
 
+    // Load signing key if available
+    let signing_key_id = load_signing_key_id(&cli);
+    if let Some(ref kid) = signing_key_id {
+        info!(key_id = %kid, "signing submissions with MineGraph identity");
+    } else {
+        info!("no signing key — submissions will be anonymous");
+    }
+
     run_engine(
         initial_config,
         strategies,
@@ -301,8 +314,31 @@ async fn main() -> Result<()> {
         cmd_rx,
         event_tx,
         cli.server.clone(),
+        signing_key_id,
     )
     .await?;
 
     Ok(())
+}
+
+/// Try to load a signing key ID from CLI flag or default config location.
+fn load_signing_key_id(cli: &Cli) -> Option<String> {
+    // Check explicit --signing-key flag first
+    if let Some(ref path) = cli.signing_key {
+        return read_key_id_from_file(path);
+    }
+    // Check default location: .config/minegraph/key.json in cwd
+    let default_path = std::env::current_dir()
+        .ok()?
+        .join(".config/minegraph/key.json");
+    if default_path.exists() {
+        return read_key_id_from_file(default_path.to_str()?);
+    }
+    None
+}
+
+fn read_key_id_from_file(path: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    json.get("key_id")?.as_str().map(|s| s.to_string())
 }

@@ -46,6 +46,10 @@ struct SubmitRequest {
     ell: u32,
     n: u32,
     graph: RgxfJson,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
 }
 
 /// Async HTTP client for the RamseyNet server.
@@ -53,6 +57,8 @@ struct SubmitRequest {
 pub struct ServerClient {
     base_url: String,
     client: reqwest::Client,
+    /// Optional signing key ID to include in submissions.
+    key_id: Option<String>,
 }
 
 impl ServerClient {
@@ -65,7 +71,13 @@ impl ServerClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
+            key_id: None,
         }
+    }
+
+    /// Set the signing key ID for all future submissions.
+    pub fn set_key_id(&mut self, key_id: String) {
+        self.key_id = Some(key_id);
     }
 
     /// Fetch the admission threshold for a (k, ell, n) leaderboard.
@@ -160,7 +172,14 @@ impl ServerClient {
         graph: RgxfJson,
     ) -> Result<SubmitResponse, WorkerError> {
         let url = format!("{}/api/submit", self.base_url);
-        let body = SubmitRequest { k, ell, n, graph };
+        let body = SubmitRequest {
+            k,
+            ell,
+            n,
+            graph,
+            key_id: self.key_id.clone(),
+            signature: None, // TODO: sign canonical payload when signing key is available
+        };
 
         let resp = self.client.post(&url).json(&body).send().await?;
 
