@@ -162,6 +162,19 @@ struct Cli {
     /// Maximum search depth for tree search
     #[arg(long, default_value = "10")]
     max_depth: u32,
+
+    /// Path to MineGraph signing key (JSON file with key_id + secret_key).
+    /// If not provided, checks .config/minegraph/key.json in the current directory.
+    #[arg(long)]
+    signing_key: Option<String>,
+
+    /// Git commit hash to include in submission metadata (for provenance tracking).
+    #[arg(long)]
+    commit_hash: Option<String>,
+
+    /// Worker ID for distinguishing parallel workers (included in submission metadata).
+    #[arg(long)]
+    worker_id: Option<u32>,
 }
 
 #[tokio::main]
@@ -293,6 +306,40 @@ async fn main() -> Result<()> {
         None
     };
 
+    // Load signing identity if available
+    let identity = load_signing_identity(&cli);
+    let (signing_key_id, signing_key) = match identity {
+        Some(id) => {
+            let has_secret = id.signing_key.is_some();
+            info!(key_id = %id.key_id, can_sign = has_secret, "loaded MineGraph identity");
+            (Some(id.key_id), id.signing_key)
+        }
+        None => {
+            info!("no signing key — submissions will be anonymous");
+            (None, None)
+        }
+    };
+
+    // Build metadata JSON from commit_hash and worker_id
+    let metadata = {
+        let mut meta = serde_json::Map::new();
+        if let Some(ref ch) = cli.commit_hash {
+            meta.insert("commit_hash".to_string(), serde_json::Value::String(ch.clone()));
+        }
+        if let Some(wid) = cli.worker_id {
+            meta.insert("worker_id".to_string(), serde_json::Value::Number(wid.into()));
+        }
+        if meta.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(meta).to_string())
+        }
+    };
+
+    if let Some(ref m) = metadata {
+        info!(metadata = %m, "submission metadata configured");
+    }
+
     run_engine(
         initial_config,
         strategies,
@@ -301,8 +348,50 @@ async fn main() -> Result<()> {
         cmd_rx,
         event_tx,
         cli.server.clone(),
+        signing_key_id,
+        signing_key,
+        metadata,
     )
     .await?;
 
     Ok(())
+}
+
+/// Loaded signing identity: key_id + optional secret key for signing.
+struct SigningIdentity {
+    key_id: String,
+    signing_key: Option<ed25519_dalek::SigningKey>,
+}
+
+/// Try to load a signing identity from CLI flag or default config location.
+fn load_signing_identity(cli: &Cli) -> Option<SigningIdentity> {
+    let path = if let Some(ref p) = cli.signing_key {
+        std::path::PathBuf::from(p)
+    } else {
+        let default = std::env::current_dir()
+            .ok()?
+            .join(".config/minegraph/key.json");
+        if default.exists() {
+            default
+        } else {
+            return None;
+        }
+    };
+
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let key_id = json.get("key_id")?.as_str()?.to_string();
+
+    // Try to load the secret key for signing
+    let signing_key = json
+        .get("secret_key")
+        .and_then(|v| v.as_str())
+        .and_then(|hex_str| hex::decode(hex_str).ok())
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+        .map(|arr| ed25519_dalek::SigningKey::from_bytes(&arr));
+
+    Some(SigningIdentity {
+        key_id,
+        signing_key,
+    })
 }

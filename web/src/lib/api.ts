@@ -49,6 +49,8 @@ export interface LeaderboardEntry {
 	goodman_gap: number;
 	tier2_aut: number;
 	score_json: string;
+	key_id: string | null;
+	metadata: string | null;
 	admitted_at: string;
 }
 
@@ -103,6 +105,31 @@ export interface SubmissionDetail {
 	verified_at: string | null;
 	leaderboard_rank: number | null;
 	score: Record<string, unknown> | null;
+	key_id: string | null;
+	sig_status: string;
+	metadata: Record<string, unknown> | null;
+}
+
+export interface KeyLeaderboardEntry {
+	k: number;
+	ell: number;
+	n: number;
+	graph_cid: string;
+	rank: number;
+	tier1_max: number;
+	tier1_min: number;
+	goodman_gap: number;
+	tier2_aut: number;
+	admitted_at: string;
+}
+
+export interface KeyInfo {
+	key_id: string;
+	public_key: string;
+	display_name: string | null;
+	github_repo: string | null;
+	created_at: string;
+	leaderboard_entries: KeyLeaderboardEntry[];
 }
 
 // ── API Functions ────────────────────────────────────────────────────
@@ -205,6 +232,15 @@ export async function submitGraph(req: SubmitRequest): Promise<SubmitResponse> {
 
 export async function getSubmission(cid: string): Promise<SubmissionDetail> {
 	const res = await fetch(`${BASE}/submissions/${encodeURIComponent(cid)}`);
+	if (!res.ok) {
+		const err = await res.json();
+		throw new Error(err.error || `HTTP ${res.status}`);
+	}
+	return res.json();
+}
+
+export async function getKeyInfo(keyId: string): Promise<KeyInfo> {
+	const res = await fetch(`${BASE}/keys/${encodeURIComponent(keyId)}`);
 	if (!res.ok) {
 		const err = await res.json();
 		throw new Error(err.error || `HTTP ${res.status}`);

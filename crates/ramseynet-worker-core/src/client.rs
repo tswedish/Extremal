@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use ed25519_dalek::{Signer, SigningKey};
 use ramseynet_graph::RgxfJson;
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +49,12 @@ struct SubmitRequest {
     ell: u32,
     n: u32,
     graph: RgxfJson,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<String>,
 }
 
 /// Async HTTP client for the RamseyNet server.
@@ -53,6 +62,12 @@ struct SubmitRequest {
 pub struct ServerClient {
     base_url: String,
     client: reqwest::Client,
+    /// Optional signing key ID to include in submissions.
+    key_id: Option<String>,
+    /// Optional Ed25519 signing key for payload signatures.
+    signing_key: Option<Arc<SigningKey>>,
+    /// Optional JSON metadata for submissions (commit_hash, worker_id, etc.).
+    metadata: Option<String>,
 }
 
 impl ServerClient {
@@ -65,7 +80,25 @@ impl ServerClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
+            key_id: None,
+            signing_key: None,
+            metadata: None,
         }
+    }
+
+    /// Set the signing key ID for all future submissions.
+    pub fn set_key_id(&mut self, key_id: String) {
+        self.key_id = Some(key_id);
+    }
+
+    /// Set the Ed25519 signing key for payload signatures.
+    pub fn set_signing_key(&mut self, key: SigningKey) {
+        self.signing_key = Some(Arc::new(key));
+    }
+
+    /// Set the JSON metadata for all future submissions.
+    pub fn set_metadata(&mut self, metadata: String) {
+        self.metadata = Some(metadata);
     }
 
     /// Fetch the admission threshold for a (k, ell, n) leaderboard.
@@ -160,7 +193,28 @@ impl ServerClient {
         graph: RgxfJson,
     ) -> Result<SubmitResponse, WorkerError> {
         let url = format!("{}/api/submit", self.base_url);
-        let body = SubmitRequest { k, ell, n, graph };
+        // Canonicalize k/ell (k <= ell) to match server-side verification
+        let (ck, cl) = if k <= ell { (k, ell) } else { (ell, k) };
+
+        // Sign the canonical payload if we have a signing key
+        let signature = self.signing_key.as_ref().map(|sk| {
+            let payload = format!(
+                r#"{{"bits_b64":"{}","encoding":"utri_b64_v1","k":{},"ell":{},"n":{}}}"#,
+                graph.bits_b64, ck, cl, n
+            );
+            let sig = sk.sign(payload.as_bytes());
+            hex::encode(sig.to_bytes())
+        });
+
+        let body = SubmitRequest {
+            k: ck,
+            ell: cl,
+            n,
+            graph,
+            key_id: self.key_id.clone(),
+            signature,
+            metadata: self.metadata.clone(),
+        };
 
         let resp = self.client.post(&url).json(&body).send().await?;
 

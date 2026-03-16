@@ -10,6 +10,12 @@ pub struct Submission {
     pub n: u32,
     pub rgxf_json: String,
     pub submitted_at: DateTime<Utc>,
+    /// Signing key ID (if signed).
+    pub key_id: Option<String>,
+    /// Signature verification status: "anonymous", "verified", "invalid", "unregistered".
+    pub sig_status: String,
+    /// Arbitrary JSON metadata from the submitter (commit hash, worker ID, etc.).
+    pub metadata: Option<String>,
 }
 
 /// A verification receipt for a submitted graph.
@@ -38,7 +44,19 @@ pub struct LeaderboardEntry {
     pub goodman_gap: u64,
     pub tier2_aut: f64,
     pub score_json: String,
+    pub key_id: Option<String>,
+    pub metadata: Option<String>,
     pub admitted_at: DateTime<Utc>,
+}
+
+/// A registered identity.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Identity {
+    pub key_id: String,
+    pub public_key: String,
+    pub display_name: Option<String>,
+    pub github_repo: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// A paginated slice of a leaderboard.

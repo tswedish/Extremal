@@ -29,6 +29,9 @@ Desktop.ini
 *.swp
 *.swo
 
+# Project-local config (signing keys, per-worktree settings)
+.config/
+
 # Claude / Playwright
 .claude/
 .playwright/

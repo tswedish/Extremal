@@ -133,7 +133,7 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
                 let event = event_rx.borrow_and_update().clone();
                 if let Some(event) = event {
                     let msg = match event {
-                        WorkerEvent::Status(status) => VizMessage::Status(status),
+                        WorkerEvent::Status(status) => VizMessage::Status(*status),
                         WorkerEvent::Error { message } => VizMessage::Error { message },
                         WorkerEvent::Strategies { strategies } => VizMessage::Strategies { strategies },
                     };

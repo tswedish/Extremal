@@ -10,12 +10,12 @@ mod schema;
 
 pub use error::LedgerError;
 pub use models::*;
-pub use queries::{AdmitScore, ThresholdInfo};
+pub use queries::{AdmitScore, SubmitIdentity, ThresholdInfo};
 
 use rusqlite::Connection;
 use std::sync::Mutex;
 
-pub const LEDGER_VERSION: &str = "0.3.0";
+pub const LEDGER_VERSION: &str = "0.4.0";
 
 /// Default leaderboard capacity per (k, ell, n) triple.
 pub const DEFAULT_LEADERBOARD_CAPACITY: u32 = 500;

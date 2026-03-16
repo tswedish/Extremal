@@ -313,6 +313,9 @@ trap cleanup EXIT INT TERM
 echo "--- Launching $NUM_WORKERS workers ---"
 echo ""
 
+# Resolve commit hash for provenance tracking
+COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
 for i in $(seq 1 $NUM_WORKERS); do
   port=$((BASE_PORT + i - 1))
   label="${WORKER_LABELS[$i]}"
@@ -320,12 +323,14 @@ for i in $(seq 1 $NUM_WORKERS); do
   md="${WORKER_DEPTHS[$i]}"
   sb="${WORKER_BIASES[$i]}"
   logfile="$LOGDIR/${STRATEGY}-${i}-${label}.log"
+  wid=$((i - 1))
 
   RUST_LOG=info cargo run --release -p ramseynet-worker -- \
     --strategy "$STRATEGY" --k "$K" --ell "$ELL" --n "$N" \
     --server "$SERVER_URL" --init "$INIT_MODE" --port "$port" \
     --max-iters "$MAX_ITERS" \
     --beam-width "$bw" --max-depth "$md" --sample-bias "$sb" \
+    --commit-hash "$COMMIT_HASH" --worker-id "$wid" \
     > "$logfile" 2>&1 &
   PIDS+=($!)
 done
