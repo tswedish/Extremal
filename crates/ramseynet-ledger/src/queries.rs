@@ -42,6 +42,9 @@ impl Ledger {
                 n,
                 rgxf_json: rgxf_json.to_string(),
                 submitted_at: now,
+                key_id: None,
+                sig_status: "anonymous".to_string(),
+                commit_hash: None,
             }),
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.code == rusqlite::ErrorCode::ConstraintViolation =>
@@ -741,7 +744,7 @@ impl Ledger {
         // 1. Get submission
         let submission: Option<Submission> = conn
             .query_row(
-                "SELECT graph_cid, k, ell, n, rgxf_json, submitted_at FROM graph_submissions WHERE graph_cid = ?1",
+                "SELECT graph_cid, k, ell, n, rgxf_json, submitted_at, key_id, sig_status, commit_hash FROM graph_submissions WHERE graph_cid = ?1",
                 params![cid],
                 |row| {
                     Ok(Submission {
@@ -751,6 +754,9 @@ impl Ledger {
                         n: row.get(3)?,
                         rgxf_json: row.get(4)?,
                         submitted_at: parse_datetime(row.get::<_, String>(5)?),
+                        key_id: row.get(6)?,
+                        sig_status: row.get::<_, String>(7)?.to_string(),
+                        commit_hash: row.get(8)?,
                     })
                 },
             )
@@ -967,6 +973,40 @@ impl Ledger {
                 })
             },
         ).map_err(LedgerError::Db)
+    }
+
+    /// Get all leaderboard entries for a given key_id, ordered by most recent first.
+    pub fn get_entries_by_key(
+        &self,
+        key_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LeaderboardEntry>, LedgerError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT k, ell, n, graph_cid, rank, tier1_max, tier1_min, goodman_gap, tier2_aut, score_json, key_id, commit_hash, admitted_at \
+             FROM leaderboard WHERE key_id = ?1 ORDER BY admitted_at DESC LIMIT ?2",
+        )?;
+        let entries = stmt
+            .query_map(params![key_id, limit], |row| {
+                Ok(LeaderboardEntry {
+                    k: row.get(0)?,
+                    ell: row.get(1)?,
+                    n: row.get(2)?,
+                    graph_cid: row.get(3)?,
+                    rank: row.get(4)?,
+                    tier1_max: row.get::<_, i64>(5)? as u64,
+                    tier1_min: row.get::<_, i64>(6)? as u64,
+                    goodman_gap: row.get::<_, i64>(7)? as u64,
+                    tier2_aut: row.get(8)?,
+                    score_json: row.get(9)?,
+                    key_id: row.get(10)?,
+                    commit_hash: row.get(11)?,
+                    admitted_at: parse_datetime(row.get::<_, String>(12)?),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(LedgerError::Db)?;
+        Ok(entries)
     }
 }
 

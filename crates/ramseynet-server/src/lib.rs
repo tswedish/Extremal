@@ -543,6 +543,16 @@ async fn get_submission(
 
     let rgxf: Option<Value> = serde_json::from_str(&submission.rgxf_json).ok();
 
+    // Prefer leaderboard entry's key_id/commit_hash, fall back to submission's
+    let key_id = lb_entry
+        .as_ref()
+        .and_then(|e| e.key_id.as_ref())
+        .or(submission.key_id.as_ref());
+    let commit_hash = lb_entry
+        .as_ref()
+        .and_then(|e| e.commit_hash.as_ref())
+        .or(submission.commit_hash.as_ref());
+
     Ok(Json(json!({
         "graph_cid": submission.graph_cid,
         "k": submission.k,
@@ -556,8 +566,9 @@ async fn get_submission(
         "verified_at": receipt.as_ref().map(|r| &r.verified_at),
         "leaderboard_rank": lb_entry.as_ref().map(|e| e.rank),
         "score": lb_entry.as_ref().and_then(|e| serde_json::from_str::<Value>(&e.score_json).ok()),
-        "key_id": lb_entry.as_ref().and_then(|e| e.key_id.as_ref()),
-        "commit_hash": lb_entry.as_ref().and_then(|e| e.commit_hash.as_ref()),
+        "key_id": key_id,
+        "sig_status": submission.sig_status,
+        "commit_hash": commit_hash,
     })))
 }
 
@@ -616,25 +627,51 @@ async fn register_key(
     ))
 }
 
-/// Get identity info by key_id.
+/// Get identity info by key_id, including their leaderboard entries.
 async fn get_key(
     State(state): State<Arc<AppState>>,
     Path(key_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let ledger = state.ledger.clone();
-    let identity = tokio::task::spawn_blocking(move || ledger.get_identity(&key_id))
-        .await
-        .unwrap()
-        .map_err(map_ledger_error)?;
+    let kid = key_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let identity = ledger.get_identity(&kid)?;
+        let entries = ledger.get_entries_by_key(&kid, 100)?;
+        Ok::<_, ramseynet_ledger::LedgerError>((identity, entries))
+    })
+    .await
+    .unwrap()
+    .map_err(map_ledger_error)?;
 
-    match identity {
-        Some(id) => Ok(Json(json!({
-            "key_id": id.key_id,
-            "public_key": id.public_key,
-            "display_name": id.display_name,
-            "github_repo": id.github_repo,
-            "created_at": id.created_at.to_rfc3339(),
-        }))),
+    match result.0 {
+        Some(id) => {
+            let entries: Vec<Value> = result
+                .1
+                .iter()
+                .map(|e| {
+                    json!({
+                        "k": e.k,
+                        "ell": e.ell,
+                        "n": e.n,
+                        "graph_cid": e.graph_cid,
+                        "rank": e.rank,
+                        "tier1_max": e.tier1_max,
+                        "tier1_min": e.tier1_min,
+                        "goodman_gap": e.goodman_gap,
+                        "tier2_aut": e.tier2_aut,
+                        "admitted_at": e.admitted_at.to_rfc3339(),
+                    })
+                })
+                .collect();
+            Ok(Json(json!({
+                "key_id": id.key_id,
+                "public_key": id.public_key,
+                "display_name": id.display_name,
+                "github_repo": id.github_repo,
+                "created_at": id.created_at.to_rfc3339(),
+                "leaderboard_entries": entries,
+            })))
+        }
         None => Err((
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "Key not found" })),

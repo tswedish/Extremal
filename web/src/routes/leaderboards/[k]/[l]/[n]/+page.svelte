@@ -350,18 +350,18 @@
 								<td class="cid">
 									<a href="/submissions/{entry.graph_cid}">{entry.graph_cid.slice(0, 16)}...</a>
 								</td>
-								<td class="submitter">
-									{#if entry.key_id}
-										<span class="key-id" title={entry.key_id}>
-											{entry.key_id.slice(0, 8)}...
-										</span>
-										{#if entry.commit_hash}
-											<span class="commit" title="commit: {entry.commit_hash}">{entry.commit_hash.slice(0, 7)}</span>
-										{/if}
-									{:else}
-										<span class="anon">anon</span>
+							<td class="submitter">
+								{#if entry.key_id}
+									<a href="/keys/{entry.key_id}" title={entry.key_id}>
+										{entry.key_id.slice(0, 8)}...
+									</a>
+									{#if entry.commit_hash}
+										<span class="commit" title="commit: {entry.commit_hash}">{entry.commit_hash.slice(0, 7)}</span>
 									{/if}
-								</td>
+								{:else}
+									<span class="anon">anon</span>
+								{/if}
+							</td>
 								<td class="score">{entry.tier1_max}</td>
 								<td class="score">{entry.tier1_min}</td>
 								<td class="score" class:gap-zero={entry.goodman_gap === 0}>{entry.goodman_gap}</td>

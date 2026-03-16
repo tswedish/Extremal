@@ -193,19 +193,22 @@ impl ServerClient {
         graph: RgxfJson,
     ) -> Result<SubmitResponse, WorkerError> {
         let url = format!("{}/api/submit", self.base_url);
+        // Canonicalize k/ell (k <= ell) to match server-side verification
+        let (ck, cl) = if k <= ell { (k, ell) } else { (ell, k) };
+
         // Sign the canonical payload if we have a signing key
         let signature = self.signing_key.as_ref().map(|sk| {
             let payload = format!(
                 r#"{{"bits_b64":"{}","encoding":"utri_b64_v1","k":{},"ell":{},"n":{}}}"#,
-                graph.bits_b64, k, ell, n
+                graph.bits_b64, ck, cl, n
             );
             let sig = sk.sign(payload.as_bytes());
             hex::encode(sig.to_bytes())
         });
 
         let body = SubmitRequest {
-            k,
-            ell,
+            k: ck,
+            ell: cl,
             n,
             graph,
             key_id: self.key_id.clone(),

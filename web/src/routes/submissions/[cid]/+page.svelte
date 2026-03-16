@@ -134,7 +134,16 @@
 				<span class="meta-label">Submitter</span>
 				<span class="meta-value mono">
 					{#if detail.key_id}
-						{detail.key_id.slice(0, 8)}...
+						<a href="/keys/{detail.key_id}" class="key-link" title={detail.key_id}>
+							{detail.key_id.slice(0, 8)}...
+						</a>
+						{#if detail.sig_status === 'verified'}
+							<span class="sig-badge sig-verified" title="Signature verified">verified</span>
+						{:else if detail.sig_status === 'unregistered'}
+							<span class="sig-badge sig-unregistered" title="Key not registered on server">unregistered</span>
+						{:else if detail.sig_status === 'invalid'}
+							<span class="sig-badge sig-invalid" title="Invalid signature">invalid</span>
+						{/if}
 						{#if detail.commit_hash}
 							<span style="color: var(--color-text-muted); font-size: 0.75rem"> @ {detail.commit_hash.slice(0, 7)}</span>
 						{/if}
@@ -315,6 +324,42 @@
 	.meta-value.mono {
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
+	}
+
+	.key-link {
+		color: var(--color-accent);
+		text-decoration: none;
+	}
+
+	.key-link:hover {
+		text-decoration: underline;
+	}
+
+	.sig-badge {
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		padding: 0.1rem 0.4rem;
+		border-radius: 0.25rem;
+		margin-left: 0.375rem;
+		vertical-align: middle;
+	}
+
+	.sig-verified {
+		color: var(--color-accepted);
+		background: color-mix(in srgb, var(--color-accepted) 15%, transparent);
+	}
+
+	.sig-unregistered {
+		color: #f59e0b;
+		background: color-mix(in srgb, #f59e0b 15%, transparent);
+	}
+
+	.sig-invalid {
+		color: var(--color-rejected);
+		background: color-mix(in srgb, var(--color-rejected) 15%, transparent);
 	}
 
 	.meta-link {

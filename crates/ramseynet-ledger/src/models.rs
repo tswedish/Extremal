@@ -10,6 +10,12 @@ pub struct Submission {
     pub n: u32,
     pub rgxf_json: String,
     pub submitted_at: DateTime<Utc>,
+    /// Signing key ID (if signed).
+    pub key_id: Option<String>,
+    /// Signature verification status: "anonymous", "verified", "invalid", "unregistered".
+    pub sig_status: String,
+    /// Git commit hash of the worker code (if provided).
+    pub commit_hash: Option<String>,
 }
 
 /// A verification receipt for a submitted graph.
