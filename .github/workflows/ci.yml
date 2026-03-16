@@ -12,14 +12,13 @@ env:
 
 jobs:
   rust:
-    name: Rust (test + clippy + WASM)
+    name: Rust (fmt + clippy + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-wasip1
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
@@ -32,9 +31,6 @@ jobs:
 
       - name: Run tests
         run: cargo test --all
-
-      - name: Build WASM verifier
-        run: cargo build --target wasm32-wasip1 -p ramseynet-verifier --release --bin ovwc1
 
   web:
     name: Web (build)

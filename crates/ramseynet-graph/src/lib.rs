@@ -4,7 +4,7 @@ pub mod rgxf;
 
 pub use adjacency::AdjacencyMatrix;
 pub use cid::compute_cid;
-pub use rgxf::{RgxfJson, RgxfError};
+pub use rgxf::{RgxfError, RgxfJson};
 
 #[cfg(test)]
 mod tests {

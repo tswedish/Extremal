@@ -30,9 +30,10 @@ type ApiError = (StatusCode, Json<Value>);
 
 fn map_ledger_error(e: LedgerError) -> ApiError {
     match &e {
-        LedgerError::GraphNotFound(_) => {
-            (StatusCode::NOT_FOUND, Json(json!({ "error": e.to_string() })))
-        }
+        LedgerError::GraphNotFound(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": e.to_string() })),
+        ),
         LedgerError::BelowThreshold(_, _, _) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({ "error": e.to_string() })),
@@ -57,9 +58,7 @@ async fn health() -> Json<Value> {
 // ── Leaderboard routes ──────────────────────────────────────────────
 
 /// GET /api/leaderboards — list all (k, ell, n) leaderboards.
-async fn list_leaderboards(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Value>, ApiError> {
+async fn list_leaderboards(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
     let ledger = state.ledger.clone();
     let summaries = tokio::task::spawn_blocking(move || ledger.list_leaderboards())
         .await
@@ -81,7 +80,9 @@ async fn list_n_for_pair(
         .unwrap()
         .map_err(map_ledger_error)?;
     debug!(k = params.k, ell = params.ell, n_values = ?ns, "listing n values for pair");
-    Ok(Json(json!({ "k": params.k, "ell": params.ell, "n_values": ns })))
+    Ok(Json(
+        json!({ "k": params.k, "ell": params.ell, "n_values": ns }),
+    ))
 }
 
 /// GET /api/leaderboards/:k/:l/:n — paginated leaderboard for (k, ell, n).
@@ -96,12 +97,11 @@ async fn get_leaderboard(
     let limit = q.limit.unwrap_or(50).min(200);
     let ledger = state.ledger.clone();
     let (pk, pl, pn) = (params.k, params.ell, n);
-    let page = tokio::task::spawn_blocking(move || {
-        ledger.get_leaderboard_page(pk, pl, pn, offset, limit)
-    })
-    .await
-    .unwrap()
-    .map_err(map_ledger_error)?;
+    let page =
+        tokio::task::spawn_blocking(move || ledger.get_leaderboard_page(pk, pl, pn, offset, limit))
+            .await
+            .unwrap()
+            .map_err(map_ledger_error)?;
 
     // Fetch RGXF for the top entry only on the first page
     let top_graph: Option<Value> = if offset == 0 {
@@ -121,8 +121,12 @@ async fn get_leaderboard(
     };
 
     debug!(
-        k = params.k, ell = params.ell, n,
-        total = page.total, offset, limit,
+        k = params.k,
+        ell = params.ell,
+        n,
+        total = page.total,
+        offset,
+        limit,
         entries = page.entries.len(),
         "serving leaderboard page"
     );
@@ -185,7 +189,14 @@ async fn get_leaderboard_graphs(
         .filter_map(|s| serde_json::from_str(&s).ok())
         .collect();
 
-    debug!(k = rp.k, ell = rp.ell, n, count = graphs.len(), offset, "serving leaderboard graphs");
+    debug!(
+        k = rp.k,
+        ell = rp.ell,
+        n,
+        count = graphs.len(),
+        offset,
+        "serving leaderboard graphs"
+    );
 
     Ok(Json(json!({
         "k": rp.k,
@@ -212,12 +223,11 @@ async fn get_leaderboard_cids(
     let since = params.since.clone();
     let ledger = state.ledger.clone();
     let (pk, pl) = (rp.k, rp.ell);
-    let (cids, total, last_updated) = tokio::task::spawn_blocking(move || {
-        ledger.get_cids_since(pk, pl, n, since.as_deref())
-    })
-    .await
-    .unwrap()
-    .map_err(map_ledger_error)?;
+    let (cids, total, last_updated) =
+        tokio::task::spawn_blocking(move || ledger.get_cids_since(pk, pl, n, since.as_deref()))
+            .await
+            .unwrap()
+            .map_err(map_ledger_error)?;
 
     debug!(
         k = rp.k, ell = rp.ell, n,
@@ -245,9 +255,7 @@ struct CidsQuery {
 
 /// Stateless verification — no database interaction.
 /// Returns the canonical CID (isomorphism-class identity) when want_cid is true.
-async fn verify(
-    Json(req): Json<VerifyRequest>,
-) -> Result<Json<VerifyResponse>, ApiError> {
+async fn verify(Json(req): Json<VerifyRequest>) -> Result<Json<VerifyResponse>, ApiError> {
     let adj = rgxf::from_json(&req.graph).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -303,17 +311,17 @@ async fn submit_graph(
     if adj.n() != n {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("n mismatch: graph has {} vertices but n={}", adj.n(), n) })),
+            Json(
+                json!({ "error": format!("n mismatch: graph has {} vertices but n={}", adj.n(), n) }),
+            ),
         ));
     }
 
     // 2. CPU dispatch: canonical form + verify + score in a single pass
     //    One nauty call, one complement construction, shared clique data.
-    let vsr = tokio::task::spawn_blocking(move || {
-        verify_and_score(&adj, k, ell)
-    })
-    .await
-    .unwrap();
+    let vsr = tokio::task::spawn_blocking(move || verify_and_score(&adj, k, ell))
+        .await
+        .unwrap();
 
     let cid_hex = vsr.canonical_cid.to_hex();
     let verdict_str = vsr.verdict.to_string();
@@ -330,15 +338,13 @@ async fn submit_graph(
     let rgxf_json_str = serde_json::to_string(&canonical_rgxf).unwrap();
 
     // Build admit score if the graph was accepted
-    let admit_score = vsr.score.as_ref().map(|graph_score| {
-        AdmitScore {
-            tier1_max: graph_score.c_omega.max(graph_score.c_alpha),
-            tier1_min: graph_score.c_omega.min(graph_score.c_alpha),
-            goodman_gap: graph_score.goodman_gap,
-            tier2_aut: graph_score.aut_order,
-            tier3_cid: cid_hex.clone(),
-            score_json: serde_json::to_string(graph_score).unwrap(),
-        }
+    let admit_score = vsr.score.as_ref().map(|graph_score| AdmitScore {
+        tier1_max: graph_score.c_omega.max(graph_score.c_alpha),
+        tier1_min: graph_score.c_omega.min(graph_score.c_alpha),
+        goodman_gap: graph_score.goodman_gap,
+        tier2_aut: graph_score.aut_order,
+        tier3_cid: cid_hex.clone(),
+        score_json: serde_json::to_string(graph_score).unwrap(),
     });
 
     // 4. DB dispatch: store + receipt + admit in a single transaction
@@ -349,7 +355,9 @@ async fn submit_graph(
     let witness = vsr.witness.clone();
     let (is_duplicate, lb_entry) = tokio::task::spawn_blocking(move || {
         ledger.submit_and_admit(
-            k, ell, n,
+            k,
+            ell,
+            n,
             &cid_hex2,
             &rgxf_json_str,
             &verdict2,

@@ -32,7 +32,12 @@ pub async fn start_viz_server(
     strategies: Vec<ramseynet_worker_api::StrategyInfo>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let state = Arc::new(AppState { viz, cmd_tx, event_rx, strategies });
+    let state = Arc::new(AppState {
+        viz,
+        cmd_tx,
+        event_rx,
+        strategies,
+    });
 
     let app = Router::new()
         .route("/", get(index_handler))
@@ -57,10 +62,7 @@ async fn index_handler() -> impl IntoResponse {
     Html(PAGE_HTML)
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
@@ -87,7 +89,9 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
     let lb_rx = state.viz.subscribe_leaderboard();
     let current_lb = lb_rx.borrow().clone();
     if !current_lb.is_empty() {
-        let lb_msg = VizMessage::Leaderboard { entries: current_lb };
+        let lb_msg = VizMessage::Leaderboard {
+            entries: current_lb,
+        };
         if send_json(&mut socket, &lb_msg).await.is_err() {
             return;
         }

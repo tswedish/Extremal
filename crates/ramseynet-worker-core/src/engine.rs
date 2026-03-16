@@ -8,8 +8,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
 use ramseynet_graph::{compute_cid, rgxf, AdjacencyMatrix};
 use ramseynet_types::GraphCid;
 use ramseynet_verifier::scoring::{compute_score_canonical, GraphScore};
@@ -17,6 +15,8 @@ use ramseynet_worker_api::{
     EngineConfigPatch, ProgressInfo, SearchJob, SearchObserver, SearchStrategy, StrategyInfo,
     WorkerCommand, WorkerEvent, WorkerMetrics, WorkerState, WorkerStatus,
 };
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 
@@ -66,7 +66,11 @@ impl AdmissionThreshold {
                 (Some(t1_max), Some(t1_min), Some(goodman_gap), Some(t2_aut), Some(t3_cid)) => {
                     match GraphCid::from_hex(t3_cid) {
                         Ok(cid) => Some(GraphScore::from_threshold(
-                            t1_max, t1_min, goodman_gap, t2_aut, cid,
+                            t1_max,
+                            t1_min,
+                            goodman_gap,
+                            t2_aut,
+                            cid,
                         )),
                         Err(_) => None,
                     }
@@ -98,7 +102,10 @@ pub struct ServerCids {
 
 impl ServerCids {
     pub fn new() -> Self {
-        Self { inner: std::collections::HashSet::new(), cap: 10_000 }
+        Self {
+            inner: std::collections::HashSet::new(),
+            cap: 10_000,
+        }
     }
 
     /// Update the cap to match the server's reported leaderboard capacity.
@@ -198,7 +205,10 @@ impl DiscoveryBuffer {
     }
 
     fn len(&self) -> usize {
-        self.items.lock().expect("discovery buffer lock poisoned").len()
+        self.items
+            .lock()
+            .expect("discovery buffer lock poisoned")
+            .len()
     }
 }
 
@@ -239,221 +249,189 @@ pub async fn run_engine(
     event_tx: mpsc::Sender<WorkerEvent>,
     default_server_url: String,
 ) -> Result<(), WorkerError> {
-        let mut rng = SmallRng::from_entropy();
-        let mut pool_rng = SmallRng::from_entropy();
+    let mut rng = SmallRng::from_entropy();
+    let mut pool_rng = SmallRng::from_entropy();
 
-        // ── Mutable search state ────────────────────────────────
-        let mut state = WorkerState::Idle;
-        let mut config: Option<EngineConfig> = None;
-        let mut client: Option<ServerClient> = None;
-        let mut server_cids = ServerCids::new();
-        let mut threshold = AdmissionThreshold::open();
-        let mut cid_sync_cursor: Option<String> = None;
-        let mut leaderboard_total: u32 = 0;
-        let mut server_pool: Vec<AdjacencyMatrix> = Vec::new();
-        let mut local_pool: Vec<LocalDiscovery> = Vec::new();
-        let mut round: u64 = 0;
-        let mut consecutive_failures: u32 = 0;
-        let mut active_strategy_id: Option<String> = None;
+    // ── Mutable search state ────────────────────────────────
+    let mut state = WorkerState::Idle;
+    let mut config: Option<EngineConfig> = None;
+    let mut client: Option<ServerClient> = None;
+    let mut server_cids = ServerCids::new();
+    let mut threshold = AdmissionThreshold::open();
+    let mut cid_sync_cursor: Option<String> = None;
+    let mut leaderboard_total: u32 = 0;
+    let mut server_pool: Vec<AdjacencyMatrix> = Vec::new();
+    let mut local_pool: Vec<LocalDiscovery> = Vec::new();
+    let mut round: u64 = 0;
+    let mut consecutive_failures: u32 = 0;
+    let mut active_strategy_id: Option<String> = None;
 
-        // Opaque strategy state carried across rounds
-        let mut strategy_state: Option<Box<dyn std::any::Any + Send>> = None;
+    // Opaque strategy state carried across rounds
+    let mut strategy_state: Option<Box<dyn std::any::Any + Send>> = None;
 
-        // Runtime metrics — accumulated across rounds
-        let mut metrics = WorkerMetrics::default();
+    // Runtime metrics — accumulated across rounds
+    let mut metrics = WorkerMetrics::default();
 
-        // Helper to build and send status
-        let send_status = |state: &WorkerState,
-                           config: &Option<EngineConfig>,
-                           round: u64,
-                           active_strategy: &Option<String>,
-                           metrics: &WorkerMetrics,
-                           event_tx: &mpsc::Sender<WorkerEvent>,
-                           default_server_url: &str| {
-            let server_url = config.as_ref()
-                .map(|c| c.server_url.clone())
-                .unwrap_or_else(|| default_server_url.to_string());
-            let status = WorkerStatus {
-                state: state.clone(),
-                k: config.as_ref().map(|c| c.k),
-                ell: config.as_ref().map(|c| c.ell),
-                n: config.as_ref().map(|c| c.n),
-                strategy: active_strategy.clone(),
-                round,
-                init_mode: config.as_ref().map(|c| format!("{:?}", c.init_mode)),
-                server_url: Some(server_url),
-                metrics: metrics.clone(),
-            };
-            let _ = event_tx.try_send(WorkerEvent::Status(status));
+    // Helper to build and send status
+    let send_status = |state: &WorkerState,
+                       config: &Option<EngineConfig>,
+                       round: u64,
+                       active_strategy: &Option<String>,
+                       metrics: &WorkerMetrics,
+                       event_tx: &mpsc::Sender<WorkerEvent>,
+                       default_server_url: &str| {
+        let server_url = config
+            .as_ref()
+            .map(|c| c.server_url.clone())
+            .unwrap_or_else(|| default_server_url.to_string());
+        let status = WorkerStatus {
+            state: state.clone(),
+            k: config.as_ref().map(|c| c.k),
+            ell: config.as_ref().map(|c| c.ell),
+            n: config.as_ref().map(|c| c.n),
+            strategy: active_strategy.clone(),
+            round,
+            init_mode: config.as_ref().map(|c| format!("{:?}", c.init_mode)),
+            server_url: Some(server_url),
+            metrics: metrics.clone(),
         };
+        let _ = event_tx.try_send(WorkerEvent::Status(status));
+    };
 
-        // Send initial strategies info
-        let strategy_infos: Vec<StrategyInfo> = strategies
-            .iter()
-            .map(|s| StrategyInfo {
-                id: s.id().to_string(),
-                name: s.name().to_string(),
-                params: s.config_schema(),
-            })
-            .collect();
-        let _ = event_tx
-            .try_send(WorkerEvent::Strategies {
-                strategies: strategy_infos,
-            });
+    // Send initial strategies info
+    let strategy_infos: Vec<StrategyInfo> = strategies
+        .iter()
+        .map(|s| StrategyInfo {
+            id: s.id().to_string(),
+            name: s.name().to_string(),
+            params: s.config_schema(),
+        })
+        .collect();
+    let _ = event_tx.try_send(WorkerEvent::Strategies {
+        strategies: strategy_infos,
+    });
 
-        // Auto-start if initial config is provided
-        if let Some(cfg) = initial_config {
-            info!(
-                k = cfg.k, ell = cfg.ell, n = cfg.n,
-                "auto-starting search from CLI args"
-            );
-            if !cfg.offline {
-                client = Some(ServerClient::new(&cfg.server_url));
-            }
-            active_strategy_id = cfg.strategy_id.clone().or_else(|| {
-                strategies.first().map(|s| s.id().to_string())
-            });
-            config = Some(cfg);
-            state = WorkerState::Searching;
-            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-        } else {
-            info!("starting in idle mode — waiting for commands");
-            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+    // Auto-start if initial config is provided
+    if let Some(cfg) = initial_config {
+        info!(
+            k = cfg.k,
+            ell = cfg.ell,
+            n = cfg.n,
+            "auto-starting search from CLI args"
+        );
+        if !cfg.offline {
+            client = Some(ServerClient::new(&cfg.server_url));
+        }
+        active_strategy_id = cfg
+            .strategy_id
+            .clone()
+            .or_else(|| strategies.first().map(|s| s.id().to_string()));
+        config = Some(cfg);
+        state = WorkerState::Searching;
+        send_status(
+            &state,
+            &config,
+            round,
+            &active_strategy_id,
+            &metrics,
+            &event_tx,
+            &default_server_url,
+        );
+    } else {
+        info!("starting in idle mode — waiting for commands");
+        send_status(
+            &state,
+            &config,
+            round,
+            &active_strategy_id,
+            &metrics,
+            &event_tx,
+            &default_server_url,
+        );
+    }
+
+    loop {
+        if *shutdown.borrow() {
+            info!("shutdown signal received, exiting");
+            return Ok(());
         }
 
-        loop {
-            if *shutdown.borrow() {
-                info!("shutdown signal received, exiting");
-                return Ok(());
+        match state {
+            WorkerState::Idle => {
+                // Wait for a command or shutdown
+                tokio::select! {
+                    Some(cmd) = cmd_rx.recv() => {
+                        match cmd {
+                            WorkerCommand::Start { k, ell, n, config: patch } => {
+                                info!(k, ell, n, "received start command");
+                                let cfg = build_config(k, ell, n, &patch, &default_server_url);
+                                if !cfg.offline {
+                                    client = Some(ServerClient::new(&cfg.server_url));
+                                } else {
+                                    client = None;
+                                }
+                                // Determine which strategy to use
+                                active_strategy_id = patch.strategy.or_else(|| {
+                                    strategies.first().map(|s| s.id().to_string())
+                                });
+                                // Clear state for new search
+                                server_cids.clear();
+                                local_pool.clear();
+                                strategy_state = None;
+                                threshold = AdmissionThreshold::open();
+                                cid_sync_cursor = None;
+                                leaderboard_total = 0;
+                                server_pool.clear();
+                                round = 0;
+                                consecutive_failures = 0;
+                                metrics = WorkerMetrics::default();
+                                config = Some(cfg);
+                                state = WorkerState::Searching;
+                                metrics.known_cids_count = server_cids.len();
+                                metrics.local_pool_size = local_pool.len();
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                            }
+                            WorkerCommand::Status => {
+                                metrics.known_cids_count = server_cids.len();
+                                metrics.local_pool_size = local_pool.len();
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                            }
+                            WorkerCommand::ClearKnownCids => {
+                                info!(prev = server_cids.len(), "clearing server CID cache");
+                                server_cids.clear();
+                                metrics.known_cids_count = 0;
+                            }
+                            WorkerCommand::ClearLocalPool => {
+                                info!(prev = local_pool.len(), "clearing local pool");
+                                local_pool.clear();
+                                metrics.local_pool_size = 0;
+                            }
+                            _ => {
+                                let _ = event_tx.try_send(WorkerEvent::Error {
+                                    message: format!("cannot {:?} in idle state", cmd),
+                                });
+                            }
+                        }
+                    }
+                    _ = shutdown.changed() => {
+                        info!("shutdown signal received");
+                        return Ok(());
+                    }
+                }
             }
 
-            match state {
-                WorkerState::Idle => {
-                    // Wait for a command or shutdown
-                    tokio::select! {
-                        Some(cmd) = cmd_rx.recv() => {
-                            match cmd {
-                                WorkerCommand::Start { k, ell, n, config: patch } => {
-                                    info!(k, ell, n, "received start command");
-                                    let cfg = build_config(k, ell, n, &patch, &default_server_url);
-                                    if !cfg.offline {
-                                        client = Some(ServerClient::new(&cfg.server_url));
-                                    } else {
-                                        client = None;
-                                    }
-                                    // Determine which strategy to use
-                                    active_strategy_id = patch.strategy.or_else(|| {
-                                        strategies.first().map(|s| s.id().to_string())
-                                    });
-                                    // Clear state for new search
-                                    server_cids.clear();
-                                    local_pool.clear();
-                                    strategy_state = None;
-                                    threshold = AdmissionThreshold::open();
-                                    cid_sync_cursor = None;
-                                    leaderboard_total = 0;
-                                    server_pool.clear();
-                                    round = 0;
-                                    consecutive_failures = 0;
-                                    metrics = WorkerMetrics::default();
-                                    config = Some(cfg);
-                                    state = WorkerState::Searching;
-                                    metrics.known_cids_count = server_cids.len();
-                                    metrics.local_pool_size = local_pool.len();
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-                                }
-                                WorkerCommand::Status => {
-                                    metrics.known_cids_count = server_cids.len();
-                                    metrics.local_pool_size = local_pool.len();
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-                                }
-                                WorkerCommand::ClearKnownCids => {
-                                    info!(prev = server_cids.len(), "clearing server CID cache");
-                                    server_cids.clear();
-                                    metrics.known_cids_count = 0;
-                                }
-                                WorkerCommand::ClearLocalPool => {
-                                    info!(prev = local_pool.len(), "clearing local pool");
-                                    local_pool.clear();
-                                    metrics.local_pool_size = 0;
-                                }
-                                _ => {
-                                    let _ = event_tx.try_send(WorkerEvent::Error {
-                                        message: format!("cannot {:?} in idle state", cmd),
-                                    });
-                                }
-                            }
-                        }
-                        _ = shutdown.changed() => {
-                            info!("shutdown signal received");
-                            return Ok(());
-                        }
-                    }
-                }
-
-                WorkerState::Paused => {
-                    // Wait for resume, stop, or shutdown
-                    tokio::select! {
-                        Some(cmd) = cmd_rx.recv() => {
-                            match cmd {
-                                WorkerCommand::Resume => {
-                                    info!("resuming search");
-                                    state = WorkerState::Searching;
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-                                }
-                                WorkerCommand::Stop => {
-                                    info!("stopping search (from paused)");
-                                    state = WorkerState::Idle;
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-                                }
-                                WorkerCommand::Status => {
-                                    metrics.known_cids_count = server_cids.len();
-                                    metrics.local_pool_size = local_pool.len();
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-                                }
-                                WorkerCommand::ClearKnownCids => {
-                                    info!(prev = server_cids.len(), "clearing server CID cache");
-                                    server_cids.clear();
-                                    metrics.known_cids_count = 0;
-                                }
-                                WorkerCommand::ClearLocalPool => {
-                                    info!(prev = local_pool.len(), "clearing local pool");
-                                    local_pool.clear();
-                                    metrics.local_pool_size = 0;
-                                }
-                                _ => {
-                                    let _ = event_tx.try_send(WorkerEvent::Error {
-                                        message: format!("cannot {:?} in paused state", cmd),
-                                    });
-                                }
-                            }
-                        }
-                        _ = shutdown.changed() => {
-                            info!("shutdown signal received");
-                            return Ok(());
-                        }
-                    }
-                }
-
-                WorkerState::Searching => {
-                    let cfg = config.as_ref().unwrap();
-                    let k = cfg.k;
-                    let ell = cfg.ell;
-                    let target_n = cfg.n;
-                    let is_online = !cfg.offline && client.is_some();
-                    let use_server_pool = matches!(cfg.init_mode, InitMode::Leaderboard);
-                    let local_pool_capacity = cfg.collector_capacity.max(100);
-
-                    // ── Check for commands before round ──────────────
-                    while let Ok(cmd) = cmd_rx.try_recv() {
+            WorkerState::Paused => {
+                // Wait for resume, stop, or shutdown
+                tokio::select! {
+                    Some(cmd) = cmd_rx.recv() => {
                         match cmd {
-                            WorkerCommand::Pause => {
-                                info!("pausing search");
-                                state = WorkerState::Paused;
+                            WorkerCommand::Resume => {
+                                info!("resuming search");
+                                state = WorkerState::Searching;
                                 send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                             }
                             WorkerCommand::Stop => {
-                                info!("stopping search");
+                                info!("stopping search (from paused)");
                                 state = WorkerState::Idle;
                                 send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                             }
@@ -462,9 +440,9 @@ pub async fn run_engine(
                                 metrics.local_pool_size = local_pool.len();
                                 send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
                             }
-                                WorkerCommand::ClearKnownCids => {
-                                    info!(prev = server_cids.len(), "clearing server CID cache");
-                                    server_cids.clear();
+                            WorkerCommand::ClearKnownCids => {
+                                info!(prev = server_cids.len(), "clearing server CID cache");
+                                server_cids.clear();
                                 metrics.known_cids_count = 0;
                             }
                             WorkerCommand::ClearLocalPool => {
@@ -472,282 +450,414 @@ pub async fn run_engine(
                                 local_pool.clear();
                                 metrics.local_pool_size = 0;
                             }
-                            _ => {}
-                        }
-                    }
-                    if state != WorkerState::Searching {
-                        continue;
-                    }
-
-                    round += 1;
-
-                    // ── Sync with server (online only) ───────────────
-                    if is_online {
-                        let cl = client.as_ref().unwrap();
-                        match cl.get_threshold(k, ell, target_n).await {
-                            Ok(resp) => {
-                                info!(
-                                    k, ell, target_n,
-                                    entries = resp.entry_count,
-                                    capacity = resp.capacity,
-                                    worst_t1 = ?resp.worst_tier1_max,
-                                    "fetched leaderboard threshold"
-                                );
-                                leaderboard_total = resp.entry_count;
-                                server_cids.set_cap(resp.capacity);
-                                threshold = AdmissionThreshold::from_response(&resp);
-                                metrics.server_connected = true;
-                                metrics.leaderboard_total = leaderboard_total;
+                            _ => {
+                                let _ = event_tx.try_send(WorkerEvent::Error {
+                                    message: format!("cannot {:?} in paused state", cmd),
+                                });
                             }
-                            Err(e) => warn!("failed to fetch threshold: {e}"),
                         }
+                    }
+                    _ = shutdown.changed() => {
+                        info!("shutdown signal received");
+                        return Ok(());
+                    }
+                }
+            }
 
+            WorkerState::Searching => {
+                let cfg = config.as_ref().unwrap();
+                let k = cfg.k;
+                let ell = cfg.ell;
+                let target_n = cfg.n;
+                let is_online = !cfg.offline && client.is_some();
+                let use_server_pool = matches!(cfg.init_mode, InitMode::Leaderboard);
+                let local_pool_capacity = cfg.collector_capacity.max(100);
+
+                // ── Check for commands before round ──────────────
+                while let Ok(cmd) = cmd_rx.try_recv() {
+                    match cmd {
+                        WorkerCommand::Pause => {
+                            info!("pausing search");
+                            state = WorkerState::Paused;
+                            send_status(
+                                &state,
+                                &config,
+                                round,
+                                &active_strategy_id,
+                                &metrics,
+                                &event_tx,
+                                &default_server_url,
+                            );
+                        }
+                        WorkerCommand::Stop => {
+                            info!("stopping search");
+                            state = WorkerState::Idle;
+                            send_status(
+                                &state,
+                                &config,
+                                round,
+                                &active_strategy_id,
+                                &metrics,
+                                &event_tx,
+                                &default_server_url,
+                            );
+                        }
+                        WorkerCommand::Status => {
+                            metrics.known_cids_count = server_cids.len();
+                            metrics.local_pool_size = local_pool.len();
+                            send_status(
+                                &state,
+                                &config,
+                                round,
+                                &active_strategy_id,
+                                &metrics,
+                                &event_tx,
+                                &default_server_url,
+                            );
+                        }
+                        WorkerCommand::ClearKnownCids => {
+                            info!(prev = server_cids.len(), "clearing server CID cache");
+                            server_cids.clear();
+                            metrics.known_cids_count = 0;
+                        }
+                        WorkerCommand::ClearLocalPool => {
+                            info!(prev = local_pool.len(), "clearing local pool");
+                            local_pool.clear();
+                            metrics.local_pool_size = 0;
+                        }
+                        _ => {}
+                    }
+                }
+                if state != WorkerState::Searching {
+                    continue;
+                }
+
+                round += 1;
+
+                // ── Sync with server (online only) ───────────────
+                if is_online {
+                    let cl = client.as_ref().unwrap();
+                    match cl.get_threshold(k, ell, target_n).await {
+                        Ok(resp) => {
+                            info!(
+                                k, ell, target_n,
+                                entries = resp.entry_count,
+                                capacity = resp.capacity,
+                                worst_t1 = ?resp.worst_tier1_max,
+                                "fetched leaderboard threshold"
+                            );
+                            leaderboard_total = resp.entry_count;
+                            server_cids.set_cap(resp.capacity);
+                            threshold = AdmissionThreshold::from_response(&resp);
+                            metrics.server_connected = true;
+                            metrics.leaderboard_total = leaderboard_total;
+                        }
+                        Err(e) => warn!("failed to fetch threshold: {e}"),
+                    }
+
+                    match cl
+                        .get_leaderboard_cids_since(k, ell, target_n, cid_sync_cursor.as_deref())
+                        .await
+                    {
+                        Ok(resp) => {
+                            if !resp.cids.is_empty() {
+                                server_cids.add_from_hex(&resp.cids);
+                            }
+                            if let Some(ref ts) = resp.last_updated {
+                                cid_sync_cursor = Some(ts.clone());
+                            }
+                            info!(
+                                server_cids = server_cids.len(),
+                                new_cids = resp.cids.len(),
+                                total = resp.total,
+                                "synced leaderboard CIDs"
+                            );
+                        }
+                        Err(e) => warn!("failed to sync leaderboard CIDs: {e}"),
+                    }
+
+                    if use_server_pool {
+                        let max_offset =
+                            leaderboard_total.saturating_sub(cfg.leaderboard_sample_size);
+                        let offset = if max_offset == 0 || cfg.sample_bias >= 1.0 {
+                            0
+                        } else {
+                            let u: f64 = pool_rng.gen();
+                            let biased = u.powf(1.0 / (1.0 - cfg.sample_bias * 0.95));
+                            (biased * max_offset as f64) as u32
+                        };
                         match cl
-                            .get_leaderboard_cids_since(k, ell, target_n, cid_sync_cursor.as_deref())
+                            .get_leaderboard_graphs(
+                                k,
+                                ell,
+                                target_n,
+                                cfg.leaderboard_sample_size,
+                                offset,
+                            )
                             .await
                         {
-                            Ok(resp) => {
-                                if !resp.cids.is_empty() {
-                                    server_cids.add_from_hex(&resp.cids);
-                                }
-                                if let Some(ref ts) = resp.last_updated {
-                                    cid_sync_cursor = Some(ts.clone());
-                                }
+                            Ok(rgxfs) => {
+                                server_pool = rgxfs
+                                    .iter()
+                                    .filter_map(|r| rgxf::from_json(r).ok())
+                                    .collect();
                                 info!(
-                                    server_cids = server_cids.len(), new_cids = resp.cids.len(),
-                                    total = resp.total, "synced leaderboard CIDs"
+                                    count = server_pool.len(),
+                                    offset, "refreshed server seed pool"
                                 );
                             }
-                            Err(e) => warn!("failed to sync leaderboard CIDs: {e}"),
-                        }
-
-                        if use_server_pool {
-                            let max_offset = leaderboard_total.saturating_sub(cfg.leaderboard_sample_size);
-                            let offset = if max_offset == 0 || cfg.sample_bias >= 1.0 {
-                                0
-                            } else {
-                                let u: f64 = pool_rng.gen();
-                                let biased = u.powf(1.0 / (1.0 - cfg.sample_bias * 0.95));
-                                (biased * max_offset as f64) as u32
-                            };
-                            match cl
-                                .get_leaderboard_graphs(k, ell, target_n, cfg.leaderboard_sample_size, offset)
-                                .await
-                            {
-                                Ok(rgxfs) => {
-                                    server_pool = rgxfs.iter().filter_map(|r| rgxf::from_json(r).ok()).collect();
-                                    info!(count = server_pool.len(), offset, "refreshed server seed pool");
-                                }
-                                Err(e) => warn!("failed to fetch leaderboard graphs: {e}"),
-                            }
+                            Err(e) => warn!("failed to fetch leaderboard graphs: {e}"),
                         }
                     }
+                }
 
-                    info!(k, ell, target_n, round, "starting search round");
+                info!(k, ell, target_n, round, "starting search round");
 
-                    // ── Pick strategy ────────────────────────────────
-                    let strategy = if let Some(ref sid) = active_strategy_id {
-                        strategies.iter().find(|s| s.id() == sid.as_str())
-                    } else {
-                        strategies.first()
-                    };
-                    let strategy = match strategy {
-                        Some(s) => Arc::clone(s),
-                        None => {
-                            error!("no strategy available");
-                            state = WorkerState::Idle;
-                            send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-                            continue;
-                        }
-                    };
-
-                    let start = Instant::now();
-                    let strategy_id = strategy.id().to_string();
-
-                    info!(strategy = %strategy_id, target_n, max_iters = cfg.max_iters, "running search");
-
-                    // ── Seed graph ───────────────────────────────────
-                    let seed_graph = if use_server_pool {
-                        init::sample_init_graph(&server_pool, cfg.sample_bias, target_n, cfg.noise_flips, &mut rng)
-                    } else if !local_pool.is_empty() {
-                        let local_graphs: Vec<AdjacencyMatrix> = local_pool.iter().map(|d| d.graph.clone()).collect();
-                        init::sample_init_graph(&local_graphs, cfg.sample_bias, target_n, cfg.noise_flips, &mut rng)
-                    } else {
-                        init::make_init_graph(&cfg.init_mode, target_n, &mut rng)
-                    };
-
-                    let job = SearchJob {
-                        k, ell, n: target_n,
-                        max_iters: cfg.max_iters,
-                        seed: rng.gen(),
-                        init_graph: Some(seed_graph),
-                        config: cfg.strategy_config.clone(),
-                        known_cids: server_cids.snapshot(),
-                        max_known_cids: cfg.max_known_cids,
-                        carry_state: strategy_state.take(),
-                    };
-
-                    let cancel_flag = Arc::new(AtomicBool::new(false));
-                    let cancel_for_search = cancel_flag.clone();
-                    let strategy_clone = Arc::clone(&strategy);
-                    let viz_for_observer = viz.clone();
-                    let discovery_buffer = Arc::new(DiscoveryBuffer::new());
-                    let buffer_for_search = Arc::clone(&discovery_buffer);
-
-                    let mut search_handle = tokio::task::spawn_blocking(move || {
-                        let observer = EngineObserver {
-                            cancelled: cancel_for_search,
-                            viz: viz_for_observer,
-                            discovery_buffer: buffer_for_search,
-                        };
-                        strategy_clone.search(&job, &observer)
-                    });
-
-                    // Per-round dedup set — tracks CIDs scored this round to avoid
-                    // re-scoring the same canonical graph in subsequent drains.
-                    let mut round_scored_cids: std::collections::HashSet<GraphCid> = std::collections::HashSet::new();
-
-                    // Wait for search, handling commands, shutdown, and periodic scoring
-                    let drain_interval = Duration::from_secs(5);
-                    let mut search_cancelled = false;
-                    let mut drain_timer = tokio::time::interval(drain_interval);
-                    drain_timer.tick().await; // skip immediate first tick
-
-                    let result = loop {
-                        tokio::select! {
-                            join_result = &mut search_handle => {
-                                match join_result {
-                                    Ok(result) => break Some(result),
-                                    Err(e) => {
-                                        error!("search strategy panicked: {e}");
-                                        let _ = event_tx.try_send(WorkerEvent::Error {
-                                            message: format!("strategy panicked: {e}"),
-                                        });
-                                        state = WorkerState::Idle;
-                                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-                                        break None;
-                                    }
-                                }
-                            }
-                            // Commands handled immediately (not on a timer)
-                            Some(cmd) = cmd_rx.recv() => {
-                                match cmd {
-                                    WorkerCommand::Pause | WorkerCommand::Stop => {
-                                        info!("cancelling search for {:?}", cmd);
-                                        cancel_flag.store(true, Ordering::Relaxed);
-                                        search_cancelled = true;
-                                        if matches!(cmd, WorkerCommand::Pause) {
-                                            state = WorkerState::Paused;
-                                        } else {
-                                            state = WorkerState::Idle;
-                                        }
-                                    }
-                                    WorkerCommand::Status => {
-                                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            // Shutdown handled immediately
-                            _ = shutdown.changed() => {
-                                if *shutdown.borrow() {
-                                    cancel_flag.store(true, Ordering::Relaxed);
-                                    search_cancelled = true;
-                                }
-                            }
-                            // Periodic drain: score discoveries and submit (every 5s)
-                            _ = drain_timer.tick() => {
-                                let drained = discovery_buffer.drain();
-                                if !drained.is_empty() {
-                                    let viz_for_scoring = viz.clone();
-                                    let strategy_id_for_scoring = strategy_id.clone();
-                                    let mut dedup_snapshot = round_scored_cids.clone();
-                                    let batch = tokio::task::spawn_blocking(move || {
-                                        score_and_dedup_with_set(
-                                            &drained, &mut dedup_snapshot, viz_for_scoring.as_ref(),
-                                            target_n, &strategy_id_for_scoring,
-                                        )
-                                    }).await.unwrap_or_default();
-                                    // Merge dedup CIDs back
-                                    for d in &batch {
-                                        round_scored_cids.insert(d.cid.clone());
-                                    }
-                                    metrics.total_discoveries += batch.len() as u64;
-                                    metrics.discovery_buffer_size = discovery_buffer.len();
-                                    feed_local_pool(&batch, &mut local_pool, local_pool_capacity, use_server_pool);
-                                    if is_online && !batch.is_empty() {
-                                        let cl = client.as_ref().unwrap();
-                                        let (submitted, admitted, skipped) = submit_batch(
-                                            cl, &batch, &threshold, &mut server_cids,
-                                            k, ell, target_n,
-                                        ).await;
-                                        metrics.total_submitted += submitted as u64;
-                                        metrics.total_admitted += admitted as u64;
-                                        metrics.total_skipped += skipped as u64;
-                                        if submitted > 0 || skipped > 0 {
-                                            info!(submitted, admitted, skipped, "periodic submission batch");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    };
-
-                    // Handle strategy panic (result is None)
-                    let mut result = match result {
-                        Some(r) => r,
-                        None => continue, // state already set to Idle above
-                    };
-
-                    // Preserve strategy state for next round
-                    strategy_state = result.carry_state.take();
-
-                    let elapsed = start.elapsed();
-
-                    if search_cancelled {
-                        info!(
-                            strategy = %strategy_id,
-                            iterations = result.iterations_used,
-                            elapsed_ms = elapsed.as_millis() as u64,
-                            "search interrupted"
+                // ── Pick strategy ────────────────────────────────
+                let strategy = if let Some(ref sid) = active_strategy_id {
+                    strategies.iter().find(|s| s.id() == sid.as_str())
+                } else {
+                    strategies.first()
+                };
+                let strategy = match strategy {
+                    Some(s) => Arc::clone(s),
+                    None => {
+                        error!("no strategy available");
+                        state = WorkerState::Idle;
+                        send_status(
+                            &state,
+                            &config,
+                            round,
+                            &active_strategy_id,
+                            &metrics,
+                            &event_tx,
+                            &default_server_url,
                         );
-                        send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
-                        if *shutdown.borrow() {
-                            return Ok(());
-                        }
                         continue;
                     }
+                };
 
-                    // ── Final drain: score any remaining buffered discoveries ──
-                    let final_raws = discovery_buffer.drain();
+                let start = Instant::now();
+                let strategy_id = strategy.id().to_string();
 
-                    let score_start = Instant::now();
-                    let scored = if !final_raws.is_empty() {
-                        let viz_for_scoring = viz.clone();
-                        let strategy_id_for_scoring = strategy_id.clone();
-                        let mut dedup_snapshot = round_scored_cids;
-                        let batch = tokio::task::spawn_blocking(move || {
-                            score_and_dedup_with_set(
-                                &final_raws, &mut dedup_snapshot, viz_for_scoring.as_ref(),
-                                target_n, &strategy_id_for_scoring,
-                            )
-                        }).await.unwrap_or_default();
-                        metrics.total_discoveries += batch.len() as u64;
-                        batch
-                    } else {
-                        Vec::new()
+                info!(strategy = %strategy_id, target_n, max_iters = cfg.max_iters, "running search");
+
+                // ── Seed graph ───────────────────────────────────
+                let seed_graph = if use_server_pool {
+                    init::sample_init_graph(
+                        &server_pool,
+                        cfg.sample_bias,
+                        target_n,
+                        cfg.noise_flips,
+                        &mut rng,
+                    )
+                } else if !local_pool.is_empty() {
+                    let local_graphs: Vec<AdjacencyMatrix> =
+                        local_pool.iter().map(|d| d.graph.clone()).collect();
+                    init::sample_init_graph(
+                        &local_graphs,
+                        cfg.sample_bias,
+                        target_n,
+                        cfg.noise_flips,
+                        &mut rng,
+                    )
+                } else {
+                    init::make_init_graph(&cfg.init_mode, target_n, &mut rng)
+                };
+
+                let job = SearchJob {
+                    k,
+                    ell,
+                    n: target_n,
+                    max_iters: cfg.max_iters,
+                    seed: rng.gen(),
+                    init_graph: Some(seed_graph),
+                    config: cfg.strategy_config.clone(),
+                    known_cids: server_cids.snapshot(),
+                    max_known_cids: cfg.max_known_cids,
+                    carry_state: strategy_state.take(),
+                };
+
+                let cancel_flag = Arc::new(AtomicBool::new(false));
+                let cancel_for_search = cancel_flag.clone();
+                let strategy_clone = Arc::clone(&strategy);
+                let viz_for_observer = viz.clone();
+                let discovery_buffer = Arc::new(DiscoveryBuffer::new());
+                let buffer_for_search = Arc::clone(&discovery_buffer);
+
+                let mut search_handle = tokio::task::spawn_blocking(move || {
+                    let observer = EngineObserver {
+                        cancelled: cancel_for_search,
+                        viz: viz_for_observer,
+                        discovery_buffer: buffer_for_search,
                     };
-                    feed_local_pool(&scored, &mut local_pool, local_pool_capacity, use_server_pool);
-                    metrics.last_scoring_ms = score_start.elapsed().as_millis() as u64;
-                    metrics.last_round_ms = elapsed.as_millis() as u64;
-                    metrics.known_cids_count = server_cids.len();
-                    metrics.local_pool_size = local_pool.len();
-                    metrics.leaderboard_total = leaderboard_total;
-                    metrics.server_connected = is_online;
+                    strategy_clone.search(&job, &observer)
+                });
 
-                    // ── Log results ──────────────────────────────────
-                    if !scored.is_empty() {
-                        info!(strategy = %strategy_id, target_n, round,
+                // Per-round dedup set — tracks CIDs scored this round to avoid
+                // re-scoring the same canonical graph in subsequent drains.
+                let mut round_scored_cids: std::collections::HashSet<GraphCid> =
+                    std::collections::HashSet::new();
+
+                // Wait for search, handling commands, shutdown, and periodic scoring
+                let drain_interval = Duration::from_secs(5);
+                let mut search_cancelled = false;
+                let mut drain_timer = tokio::time::interval(drain_interval);
+                drain_timer.tick().await; // skip immediate first tick
+
+                let result = loop {
+                    tokio::select! {
+                        join_result = &mut search_handle => {
+                            match join_result {
+                                Ok(result) => break Some(result),
+                                Err(e) => {
+                                    error!("search strategy panicked: {e}");
+                                    let _ = event_tx.try_send(WorkerEvent::Error {
+                                        message: format!("strategy panicked: {e}"),
+                                    });
+                                    state = WorkerState::Idle;
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                                    break None;
+                                }
+                            }
+                        }
+                        // Commands handled immediately (not on a timer)
+                        Some(cmd) = cmd_rx.recv() => {
+                            match cmd {
+                                WorkerCommand::Pause | WorkerCommand::Stop => {
+                                    info!("cancelling search for {:?}", cmd);
+                                    cancel_flag.store(true, Ordering::Relaxed);
+                                    search_cancelled = true;
+                                    if matches!(cmd, WorkerCommand::Pause) {
+                                        state = WorkerState::Paused;
+                                    } else {
+                                        state = WorkerState::Idle;
+                                    }
+                                }
+                                WorkerCommand::Status => {
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                                }
+                                _ => {}
+                            }
+                        }
+                        // Shutdown handled immediately
+                        _ = shutdown.changed() => {
+                            if *shutdown.borrow() {
+                                cancel_flag.store(true, Ordering::Relaxed);
+                                search_cancelled = true;
+                            }
+                        }
+                        // Periodic drain: score discoveries and submit (every 5s)
+                        _ = drain_timer.tick() => {
+                            let drained = discovery_buffer.drain();
+                            if !drained.is_empty() {
+                                let viz_for_scoring = viz.clone();
+                                let strategy_id_for_scoring = strategy_id.clone();
+                                let mut dedup_snapshot = round_scored_cids.clone();
+                                let batch = tokio::task::spawn_blocking(move || {
+                                    score_and_dedup_with_set(
+                                        &drained, &mut dedup_snapshot, viz_for_scoring.as_ref(),
+                                        target_n, &strategy_id_for_scoring,
+                                    )
+                                }).await.unwrap_or_default();
+                                // Merge dedup CIDs back
+                                for d in &batch {
+                                    round_scored_cids.insert(d.cid.clone());
+                                }
+                                metrics.total_discoveries += batch.len() as u64;
+                                metrics.discovery_buffer_size = discovery_buffer.len();
+                                feed_local_pool(&batch, &mut local_pool, local_pool_capacity, use_server_pool);
+                                if is_online && !batch.is_empty() {
+                                    let cl = client.as_ref().unwrap();
+                                    let (submitted, admitted, skipped) = submit_batch(
+                                        cl, &batch, &threshold, &mut server_cids,
+                                        k, ell, target_n,
+                                    ).await;
+                                    metrics.total_submitted += submitted as u64;
+                                    metrics.total_admitted += admitted as u64;
+                                    metrics.total_skipped += skipped as u64;
+                                    if submitted > 0 || skipped > 0 {
+                                        info!(submitted, admitted, skipped, "periodic submission batch");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                // Handle strategy panic (result is None)
+                let mut result = match result {
+                    Some(r) => r,
+                    None => continue, // state already set to Idle above
+                };
+
+                // Preserve strategy state for next round
+                strategy_state = result.carry_state.take();
+
+                let elapsed = start.elapsed();
+
+                if search_cancelled {
+                    info!(
+                        strategy = %strategy_id,
+                        iterations = result.iterations_used,
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        "search interrupted"
+                    );
+                    send_status(
+                        &state,
+                        &config,
+                        round,
+                        &active_strategy_id,
+                        &metrics,
+                        &event_tx,
+                        &default_server_url,
+                    );
+                    if *shutdown.borrow() {
+                        return Ok(());
+                    }
+                    continue;
+                }
+
+                // ── Final drain: score any remaining buffered discoveries ──
+                let final_raws = discovery_buffer.drain();
+
+                let score_start = Instant::now();
+                let scored = if !final_raws.is_empty() {
+                    let viz_for_scoring = viz.clone();
+                    let strategy_id_for_scoring = strategy_id.clone();
+                    let mut dedup_snapshot = round_scored_cids;
+                    let batch = tokio::task::spawn_blocking(move || {
+                        score_and_dedup_with_set(
+                            &final_raws,
+                            &mut dedup_snapshot,
+                            viz_for_scoring.as_ref(),
+                            target_n,
+                            &strategy_id_for_scoring,
+                        )
+                    })
+                    .await
+                    .unwrap_or_default();
+                    metrics.total_discoveries += batch.len() as u64;
+                    batch
+                } else {
+                    Vec::new()
+                };
+                feed_local_pool(
+                    &scored,
+                    &mut local_pool,
+                    local_pool_capacity,
+                    use_server_pool,
+                );
+                metrics.last_scoring_ms = score_start.elapsed().as_millis() as u64;
+                metrics.last_round_ms = elapsed.as_millis() as u64;
+                metrics.known_cids_count = server_cids.len();
+                metrics.local_pool_size = local_pool.len();
+                metrics.leaderboard_total = leaderboard_total;
+                metrics.server_connected = is_online;
+
+                // ── Log results ──────────────────────────────────
+                if !scored.is_empty() {
+                    info!(strategy = %strategy_id, target_n, round,
                             iterations = result.iterations_used,
                             elapsed_ms = elapsed.as_millis() as u64,
                             discoveries = scored.len(),
@@ -756,60 +866,76 @@ pub async fn run_engine(
                             total_submitted = metrics.total_submitted,
                             local_pool = local_pool.len(),
                             "round_summary");
-                    } else if result.valid {
-                        info!(strategy = %strategy_id, target_n, iterations = result.iterations_used,
+                } else if result.valid {
+                    info!(strategy = %strategy_id, target_n, iterations = result.iterations_used,
                             elapsed_ms = elapsed.as_millis() as u64, "found valid graph (all duplicates)");
-                    } else {
-                        warn!(strategy = %strategy_id, target_n, iterations = result.iterations_used,
+                } else {
+                    warn!(strategy = %strategy_id, target_n, iterations = result.iterations_used,
                             elapsed_ms = elapsed.as_millis() as u64, "no valid graph found");
-                    }
+                }
 
-                    // ── Submit to server ─────────────────────────────
-                    if is_online && !scored.is_empty() {
-                        let submit_start = Instant::now();
-                        let cl = client.as_ref().unwrap();
-                        let (submitted, admitted, skipped) = submit_batch(
-                            cl, &scored, &threshold, &mut server_cids, k, ell, target_n,
-                        ).await;
-                        metrics.last_submit_ms = submit_start.elapsed().as_millis() as u64;
-                        metrics.total_submitted += submitted as u64;
-                        metrics.total_admitted += admitted as u64;
-                        metrics.total_skipped += skipped as u64;
-                        if submitted > 0 || skipped > 0 {
-                            info!(submitted, admitted, skipped, "final submission batch");
-                        }
-                        if submitted > 0 { consecutive_failures = 0; }
-                    } else if !scored.is_empty() {
-                        info!(discoveries = scored.len(), "discoveries found (offline, not submitted)");
+                // ── Submit to server ─────────────────────────────
+                if is_online && !scored.is_empty() {
+                    let submit_start = Instant::now();
+                    let cl = client.as_ref().unwrap();
+                    let (submitted, admitted, skipped) =
+                        submit_batch(cl, &scored, &threshold, &mut server_cids, k, ell, target_n)
+                            .await;
+                    metrics.last_submit_ms = submit_start.elapsed().as_millis() as u64;
+                    metrics.total_submitted += submitted as u64;
+                    metrics.total_admitted += admitted as u64;
+                    metrics.total_skipped += skipped as u64;
+                    if submitted > 0 || skipped > 0 {
+                        info!(submitted, admitted, skipped, "final submission batch");
                     }
+                    if submitted > 0 {
+                        consecutive_failures = 0;
+                    }
+                } else if !scored.is_empty() {
+                    info!(
+                        discoveries = scored.len(),
+                        "discoveries found (offline, not submitted)"
+                    );
+                }
 
-                    // ── Backoff on failure ───────────────────────────
-                    if scored.is_empty() && !result.valid {
-                        consecutive_failures += 1;
-                        if !cfg.no_backoff {
-                            let backoff_secs = (2u64.pow(consecutive_failures.min(5))).min(60);
-                            warn!(consecutive_failures, backoff_secs, "no discoveries, backing off");
-                            tokio::select! {
-                                _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
-                                _ = shutdown.changed() => { return Ok(()); }
-                                Some(cmd) = cmd_rx.recv() => {
-                                    match cmd {
-                                        WorkerCommand::Pause => { state = WorkerState::Paused; }
-                                        WorkerCommand::Stop => { state = WorkerState::Idle; }
-                                        _ => {}
-                                    }
+                // ── Backoff on failure ───────────────────────────
+                if scored.is_empty() && !result.valid {
+                    consecutive_failures += 1;
+                    if !cfg.no_backoff {
+                        let backoff_secs = (2u64.pow(consecutive_failures.min(5))).min(60);
+                        warn!(
+                            consecutive_failures,
+                            backoff_secs, "no discoveries, backing off"
+                        );
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => {}
+                            _ = shutdown.changed() => { return Ok(()); }
+                            Some(cmd) = cmd_rx.recv() => {
+                                match cmd {
+                                    WorkerCommand::Pause => { state = WorkerState::Paused; }
+                                    WorkerCommand::Stop => { state = WorkerState::Idle; }
+                                    _ => {}
                                 }
                             }
                         }
-                    } else {
-                        consecutive_failures = 0;
                     }
-
-                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                } else {
+                    consecutive_failures = 0;
                 }
+
+                send_status(
+                    &state,
+                    &config,
+                    round,
+                    &active_strategy_id,
+                    &metrics,
+                    &event_tx,
+                    &default_server_url,
+                );
             }
         }
     }
+}
 
 /// Score raw discoveries, deduplicate by canonical CID, and forward to viz.
 ///
@@ -977,7 +1103,13 @@ async fn submit_batch(
 }
 
 /// Build an EngineConfig from a Start command's patch, using sensible defaults.
-fn build_config(k: u32, ell: u32, n: u32, patch: &EngineConfigPatch, default_server_url: &str) -> EngineConfig {
+fn build_config(
+    k: u32,
+    ell: u32,
+    n: u32,
+    patch: &EngineConfigPatch,
+    default_server_url: &str,
+) -> EngineConfig {
     let num_edges = n * (n - 1) / 2;
     let noise_flips = patch
         .noise_flips
@@ -1004,8 +1136,14 @@ fn build_config(k: u32, ell: u32, n: u32, patch: &EngineConfigPatch, default_ser
         noise_flips,
         init_mode,
         strategy_id: patch.strategy.clone(),
-        strategy_config: patch.strategy_config.clone().unwrap_or(serde_json::json!({})),
-        server_url: patch.server_url.clone().unwrap_or_else(|| default_server_url.to_string()),
+        strategy_config: patch
+            .strategy_config
+            .clone()
+            .unwrap_or(serde_json::json!({})),
+        server_url: patch
+            .server_url
+            .clone()
+            .unwrap_or_else(|| default_server_url.to_string()),
     }
 }
 
@@ -1023,7 +1161,13 @@ mod tests {
         GraphScore::from_threshold(t1_max, t1_min, gap, aut, test_cid(cid_byte))
     }
 
-    fn make_discovery(t1_max: u64, t1_min: u64, gap: u64, aut: f64, cid_byte: u8) -> LocalDiscovery {
+    fn make_discovery(
+        t1_max: u64,
+        t1_min: u64,
+        gap: u64,
+        aut: f64,
+        cid_byte: u8,
+    ) -> LocalDiscovery {
         LocalDiscovery {
             graph: AdjacencyMatrix::new(5),
             score: make_score(t1_max, t1_min, gap, aut, cid_byte),

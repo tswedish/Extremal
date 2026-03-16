@@ -24,11 +24,7 @@ pub enum RgxfError {
     #[error("base64 decode error: {0}")]
     Base64(#[from] base64::DecodeError),
     #[error("invalid bit vector length for n={n}: expected {expected} bytes, got {got}")]
-    BitLengthMismatch {
-        n: u32,
-        expected: usize,
-        got: usize,
-    },
+    BitLengthMismatch { n: u32, expected: usize, got: usize },
     #[error("invalid RGXF binary: {0}")]
     InvalidBinary(String),
 }

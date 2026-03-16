@@ -208,11 +208,14 @@ async fn main() -> Result<()> {
             other => anyhow::bail!("unknown init mode: {other}"),
         };
         let num_edges = n * (n - 1) / 2;
-        let noise_flips = cli.noise_flips
+        let noise_flips = cli
+            .noise_flips
             .unwrap_or(((num_edges as f64).sqrt() / 2.0).ceil() as u32);
 
         Some(EngineConfig {
-            k, ell, n,
+            k,
+            ell,
+            n,
             max_iters: cli.max_iters,
             no_backoff: cli.no_backoff,
             offline: cli.offline,
@@ -275,8 +278,14 @@ async fn main() -> Result<()> {
         let strats_for_viz = strategy_infos.clone();
         tokio::spawn(async move {
             ramseynet_worker::viz::server::start_viz_server(
-                port, viz_for_server, cmd_tx_for_viz, event_rx_for_viz, strats_for_viz, viz_shutdown,
-            ).await;
+                port,
+                viz_for_server,
+                cmd_tx_for_viz,
+                event_rx_for_viz,
+                strats_for_viz,
+                viz_shutdown,
+            )
+            .await;
         });
         info!("worker web-app at http://localhost:{port}");
         Some(Arc::new(VizBridgeImpl::new(handle)))
@@ -292,7 +301,8 @@ async fn main() -> Result<()> {
         cmd_rx,
         event_tx,
         cli.server.clone(),
-    ).await?;
+    )
+    .await?;
 
     Ok(())
 }

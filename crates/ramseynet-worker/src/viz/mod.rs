@@ -180,7 +180,10 @@ impl VizHandle {
             times_found: 1,
         };
 
-        let mut lb = self.leaderboard.lock().expect("viz leaderboard lock poisoned");
+        let mut lb = self
+            .leaderboard
+            .lock()
+            .expect("viz leaderboard lock poisoned");
         let result = lb.submit(entry);
 
         if result.is_some() {

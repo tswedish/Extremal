@@ -259,7 +259,10 @@ async fn system_test_full_lifecycle() {
         assert_eq!(resp.status(), 200, "duplicate should return 200");
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["verdict"], "accepted");
-        assert_eq!(body["admitted"], true, "duplicate already on leaderboard should report admitted");
+        assert_eq!(
+            body["admitted"], true,
+            "duplicate already on leaderboard should report admitted"
+        );
         assert_eq!(body["rank"], 1, "duplicate should report existing rank");
         eprintln!("[PASS] 10. Duplicate C5 returns 200, reports existing rank");
     }
@@ -324,7 +327,10 @@ async fn system_test_full_lifecycle() {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["entry_count"], 1);
         assert_eq!(body["capacity"], 500);
-        assert!(body["worst_tier1_max"].is_null(), "board not full, no worst");
+        assert!(
+            body["worst_tier1_max"].is_null(),
+            "board not full, no worst"
+        );
         eprintln!("[PASS] 14. Threshold: 1/500 entries, board not full");
     }
 
@@ -676,7 +682,10 @@ async fn test_multiple_entries_ranking() {
     assert_eq!(entries[0]["rank"], 1);
     assert_eq!(entries[1]["rank"], 2);
     // Both CIDs should be present
-    let cids: Vec<&str> = entries.iter().map(|e| e["graph_cid"].as_str().unwrap()).collect();
+    let cids: Vec<&str> = entries
+        .iter()
+        .map(|e| e["graph_cid"].as_str().unwrap())
+        .collect();
     assert!(cids.contains(&c5_cid.as_str()));
     assert!(cids.contains(&p5_cid.as_str()));
     eprintln!("[PASS] leaderboard has 2 ranked entries");
@@ -716,7 +725,10 @@ async fn test_isomorphic_dedup() {
     assert_eq!(body["verdict"], "accepted");
     assert_eq!(body["admitted"], true);
     let canonical_cid = body["graph_cid"].as_str().unwrap().to_string();
-    eprintln!("[PASS] standard C5 submitted, canonical CID: {}...", &canonical_cid[..16]);
+    eprintln!(
+        "[PASS] standard C5 submitted, canonical CID: {}...",
+        &canonical_cid[..16]
+    );
 
     // 2. Submit relabeled C5 — should be detected as isomorphic duplicate
     let resp = client
@@ -728,9 +740,16 @@ async fn test_isomorphic_dedup() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200, "isomorphic graph should return 200 (duplicate)");
+    assert_eq!(
+        resp.status(),
+        200,
+        "isomorphic graph should return 200 (duplicate)"
+    );
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["graph_cid"], canonical_cid, "isomorphic graph should produce same canonical CID");
+    assert_eq!(
+        body["graph_cid"], canonical_cid,
+        "isomorphic graph should produce same canonical CID"
+    );
     assert_eq!(body["verdict"], "accepted");
     eprintln!("[PASS] relabeled C5 detected as isomorphic duplicate");
 
@@ -743,7 +762,11 @@ async fn test_isomorphic_dedup() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
     let entries = body["entries"].as_array().unwrap();
-    assert_eq!(entries.len(), 1, "isomorphic graphs should not create separate leaderboard entries");
+    assert_eq!(
+        entries.len(),
+        1,
+        "isomorphic graphs should not create separate leaderboard entries"
+    );
     assert_eq!(entries[0]["graph_cid"], canonical_cid);
     eprintln!("[PASS] leaderboard has exactly 1 entry for isomorphism class");
 
@@ -757,7 +780,9 @@ async fn test_isomorphic_dedup() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["graph_cid"], canonical_cid, "verify should return canonical CID");
+    assert_eq!(
+        body["graph_cid"], canonical_cid,
+        "verify should return canonical CID"
+    );
     eprintln!("[PASS] verify returns canonical CID for relabeled graph");
 }
-
