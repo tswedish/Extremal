@@ -112,7 +112,7 @@ struct Cli {
     n: Option<u32>,
 
     /// Search strategy
-    #[arg(long, default_value = "tree")]
+    #[arg(long, default_value = "tree2")]
     strategy: String,
 
     /// Maximum iterations per search attempt
