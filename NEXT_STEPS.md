@@ -1,41 +1,41 @@
 # MineGraph — Next Steps
 
-Current state as of 2026-03-15.
+Current state as of 2026-03-16.
 
 ## Where We Are
 
-- **tree2 is the production baseline.** It's ~11x faster than tree per round,
-  gets ~4.6x more leaderboard admissions, and is now the default strategy.
-- **16-worker fleet** running tree2 against R(5,5) n=25, ~80% CPU utilization.
-- **Leaderboard is saturating** — admission rates dropping, tree fully plateaued,
-  tree2 approaching plateau with ~6K total admissions into 500-slot boards.
-- **First experiment data collected** — tree vs tree2 head-to-head with analysis.
+- **tree2 with bitwise acceleration is deployed.** The inner loop now uses
+  `u64` neighbor bitmasks for clique counting — AND/popcount instead of
+  per-vertex `edge()` calls. Expected 5-10x speedup over previous tree2.
+- **tree2 is the default strategy** (`--strategy` defaults to `tree2`).
+- **16-worker fleet** infrastructure with `./run fleet` and `--sweep` mode
+  for hyperparameter search across beam_width, max_depth, sample_bias.
+- **First experiment completed** (tree vs tree2 pre-bitwise): tree2 was 11x
+  faster and got 4.6x more admissions. Pre-bitwise tree2 plateau'd after
+  extended runs on the 500-slot board.
+- **Fleet run completed** (16 x tree2 pre-bitwise): 136M discoveries, 10.8K
+  admissions, 93.4% admission rate against 2000-slot board.
 
-## Main Improvement Path (RESUME HERE)
+## What to Do Next (RESUME HERE)
 
-### Priority 1: Bitwise Adjacency Operations (5-10x speedup)
+### Immediate: Run bitwise fleet experiment
 
-**This is the single highest-leverage change available.**
+The bitwise implementation just landed. Run a fleet to measure the actual
+speedup vs the pre-bitwise baseline:
 
-The clique-checking inner loop currently uses scalar `edge()` calls (index math +
-byte lookup per check). For n=25, the entire adjacency matrix is 300 bits = 5 `u64`
-words. Rewriting the inner loop to use bitwise AND/OR/popcount operations would:
+```bash
+# Start server (if not running)
+./run server --release --leaderboard-capacity 2000
 
-- Replace ~46 `edge()` calls per common-neighbor scan with 1 AND + 1 popcount
-- Replace recursive backtracking with nested bit iteration
-- Eliminate all `Vec` allocations in the hot path
-- **Expected speedup: 5-10x** on the same hardware
+# Run bitwise fleet
+./run fleet --sweep --base-port 9000
+```
 
-This makes 16 workers equivalent to 80-160 workers with current code.
-
-**Files to change:**
-- `crates/ramseynet-graph/src/adjacency.rs` — add `neighbor_masks()` method
-- `crates/ramseynet-strategies/src/incremental.rs` — add bitwise counting functions + `NeighborSet` type
-- `crates/ramseynet-strategies/src/tree2.rs` — update `BeamEntry` to carry `NeighborSet`
-- `crates/ramseynet-strategies/src/evo.rs` — update `Individual` to carry `NeighborSet`
-
-**Design is fully specified** — see conversation history for the complete implementation plan
-with data structures, algorithms, and performance estimates.
+Let it run 15-30 minutes, then compare:
+- **Round time** — expect ~30-80ms avg (vs ~330ms pre-bitwise)
+- **Total discoveries** — expect 5-10x more in same wall time
+- **Admission rate** — may drop if leaderboard is already well-populated
+- **Per-profile results** — which hyperparameter combo is best?
 
 ### Priority 2: Diversity-Aware Beam Selection
 
@@ -54,23 +54,28 @@ are treated equally. To improve leaderboard rank, the search should:
 - Among valid candidates in the beam, prefer those with better Goodman gap
 - Use automorphism-group-order proxy during search (expensive, but only for valid candidates)
 
-### Priority 4: GPU Batch Evaluation (after bitwise)
+### Priority 4: GPU Batch Evaluation (after bitwise proves out)
 
-Once the inner loop is bitwise (no branching, no recursion), it maps trivially to GPU:
+The bitwise inner loop (AND/popcount, no branching) now maps trivially to GPU:
 - Each CUDA thread processes one (parent, edge) pair
-- Zero warp divergence
+- Zero warp divergence since all threads do identical bit ops
 - RTX 4070 available with 12GB VRAM, currently unused
 - Expected additional 10-50x on top of bitwise CPU
+
+## Completed
+
+- [x] Bitwise adjacency operations (NeighborSet, violation_delta_bitwise)
+- [x] tree2 default strategy
+- [x] Fleet with --sweep hyperparameter search
+- [x] Experiment analysis tooling (analyze_experiment.sh)
+- [x] MineGraph Gem renderer v3 (diamond matrix style)
+- [x] Server submission pipeline optimization (single transaction, no redundant nauty)
+- [x] Cross-round state persistence for strategies
 
 ## Experiment Infrastructure
 
 - `./run experiment` — head-to-head strategy comparison
-- `./run fleet` — launch N workers against same server
+- `./run fleet` — launch N workers (uniform or `--sweep`)
 - `./scripts/analyze_experiment.sh` — compact analysis of experiment logs
+- `./scripts/render_gems.sh` — render gems from leaderboard
 - Logs in `logs/experiment-*/` and `logs/fleet-*/`
-
-## Side Quests (fun but not on critical path)
-
-- **MineGraph Gem renderer** — `minegraph_gem_v2.py`, deterministic pixel-art from graphs
-- **Web integration** — render gems in the leaderboard web app
-- **Public deployment** — Cloud Run server, public leaderboard, contributor workflows

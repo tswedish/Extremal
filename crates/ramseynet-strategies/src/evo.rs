@@ -33,10 +33,9 @@ use ramseynet_worker_api::{
     SearchStrategy,
 };
 
-use crate::incremental::violation_delta;
+use crate::incremental::{violation_delta_bitwise, NeighborSet};
 
 /// Violation score: total k-cliques + ell-independent-sets.
-/// An independent set of size ell in G is a clique of size ell in complement(G).
 #[cfg(test)]
 fn full_violation_score(adj: &AdjacencyMatrix, k: u32, ell: u32) -> (u64, u64, u64) {
     let kc = count_cliques(adj, k);
@@ -48,24 +47,30 @@ fn full_violation_score(adj: &AdjacencyMatrix, k: u32, ell: u32) -> (u64, u64, u
 // ── Population state (persisted across rounds) ──────────────────────
 
 /// State for one individual in the population.
-/// Maintains both the graph and its complement for zero-allocation delta updates.
+/// Maintains graph, complement, and neighbor bitmasks.
 struct Individual {
     graph: AdjacencyMatrix,
     comp: AdjacencyMatrix,
+    adj_nbrs: NeighborSet,
+    comp_nbrs: NeighborSet,
     violations: u64,
     kc: u64,
     ei: u64,
 }
 
 impl Individual {
-    /// Build from a graph, computing complement and violation counts.
+    /// Build from a graph, computing complement, masks, and violation counts.
     fn from_graph(graph: AdjacencyMatrix, k: u32, ell: u32) -> Self {
         let comp = graph.complement();
+        let adj_nbrs = NeighborSet::from_adj(&graph);
+        let comp_nbrs = NeighborSet::from_adj(&comp);
         let kc = count_cliques(&graph, k);
         let ei = count_cliques(&comp, ell);
         Individual {
             graph,
             comp,
+            adj_nbrs,
+            comp_nbrs,
             violations: kc + ei,
             kc,
             ei,
@@ -75,16 +80,20 @@ impl Individual {
     /// Recompute violation counts from scratch (corrects any drift).
     fn full_recount(&mut self, k: u32, ell: u32) {
         self.comp = self.graph.complement();
+        self.adj_nbrs = NeighborSet::from_adj(&self.graph);
+        self.comp_nbrs = NeighborSet::from_adj(&self.comp);
         self.kc = count_cliques(&self.graph, k);
         self.ei = count_cliques(&self.comp, ell);
         self.violations = self.kc + self.ei;
     }
 
-    /// Flip an edge in both the graph and complement.
+    /// Flip an edge in graph, complement, and both neighbor sets.
     fn flip_edge(&mut self, u: u32, v: u32) {
         let cur = self.graph.edge(u, v);
         self.graph.set_edge(u, v, !cur);
-        self.comp.set_edge(u, v, cur); // complement is opposite
+        self.comp.set_edge(u, v, cur);
+        self.adj_nbrs.flip_edge(u, v);
+        self.comp_nbrs.flip_edge(u, v);
     }
 }
 
@@ -325,7 +334,8 @@ impl SearchStrategy for EvoSearch {
             let ind = &mut pop[ind_idx];
 
             // Incremental delta computation — no allocations
-            let (delta_kc, delta_ei) = violation_delta(&ind.graph, &ind.comp, k, ell, u, v);
+            let (delta_kc, delta_ei) =
+                violation_delta_bitwise(&ind.adj_nbrs, &ind.comp_nbrs, k, ell, u, v);
             let old_violations = ind.violations as i64;
             let new_violations = old_violations + delta_kc + delta_ei;
 
@@ -535,7 +545,7 @@ fn random_graph(n: u32, rng: &mut SmallRng) -> AdjacencyMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::incremental::count_cliques_through_edge;
+    use crate::incremental::{count_cliques_through_edge, violation_delta_scalar};
     use ramseynet_worker_api::observer::NoOpObserver;
     use std::collections::HashSet;
 
@@ -631,7 +641,7 @@ mod tests {
             let (u, v) = if u < v { (u, v) } else { (v, u) };
 
             let (_before_total, before_kc, before_ei) = full_violation_score(&g, k, ell);
-            let (delta_kc, delta_ei) = violation_delta(&g, &comp, k, ell, u, v);
+            let (delta_kc, delta_ei) = violation_delta_scalar(&g, &comp, k, ell, u, v);
 
             // Apply flip to both graph and complement
             let cur = g.edge(u, v);
@@ -673,7 +683,7 @@ mod tests {
             let (u, v) = if u < v { (u, v) } else { (v, u) };
 
             let (_, before_kc, before_ei) = full_violation_score(&g, k, ell);
-            let (delta_kc, delta_ei) = violation_delta(&g, &comp, k, ell, u, v);
+            let (delta_kc, delta_ei) = violation_delta_scalar(&g, &comp, k, ell, u, v);
 
             let cur = g.edge(u, v);
             g.set_edge(u, v, !cur);
