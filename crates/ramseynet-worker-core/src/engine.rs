@@ -250,6 +250,7 @@ pub async fn run_engine(
     event_tx: mpsc::Sender<WorkerEvent>,
     default_server_url: String,
     signing_key_id: Option<String>,
+    signing_key: Option<ed25519_dalek::SigningKey>,
     commit_hash: Option<String>,
 ) -> Result<(), WorkerError> {
     let mut rng = SmallRng::from_entropy();
@@ -327,6 +328,9 @@ pub async fn run_engine(
             if let Some(ref kid) = signing_key_id {
                 c.set_key_id(kid.clone());
             }
+            if let Some(ref sk) = signing_key {
+                c.set_signing_key(sk.clone());
+            }
             if let Some(ref ch) = commit_hash {
                 c.set_commit_hash(ch.clone());
             }
@@ -379,6 +383,9 @@ pub async fn run_engine(
                                     let mut c = ServerClient::new(&cfg.server_url);
                                     if let Some(ref kid) = signing_key_id {
                                         c.set_key_id(kid.clone());
+                                    }
+                                    if let Some(ref sk) = signing_key {
+                                        c.set_signing_key(sk.clone());
                                     }
                                     if let Some(ref ch) = commit_hash {
                                         c.set_commit_hash(ch.clone());

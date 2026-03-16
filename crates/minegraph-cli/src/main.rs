@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 #[allow(dead_code)]
@@ -37,6 +37,18 @@ enum Command {
     },
     /// Initialize a MineGraph config directory in the current project
     Init,
+    /// Register your public key with a MineGraph server
+    RegisterKey {
+        /// Server URL (uses config server_url if not specified)
+        #[arg(long)]
+        server: Option<String>,
+        /// Display name (uses key file display_name if not specified)
+        #[arg(long)]
+        name: Option<String>,
+        /// GitHub repo (e.g., "user/repo")
+        #[arg(long)]
+        github_repo: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -102,6 +114,54 @@ fn main() -> Result<()> {
             }
             println!("Public key: {}", info.public_key_hex);
             println!("Key file:   {}", key_path.display());
+        }
+
+        Command::RegisterKey {
+            server,
+            name,
+            github_repo,
+        } => {
+            let key_path = config_dir.join("key.json");
+            if !key_path.exists() {
+                eprintln!("No signing key found. Run `minegraph keygen` first.");
+                std::process::exit(1);
+            }
+            let info = identity::load_key_info(&key_path)?;
+            let config_path = config_dir.join("config.toml");
+            let cfg = config::load_config(&config_path)?;
+            let server_url = server.unwrap_or(cfg.server_url);
+            let display_name = name.or(info.display_name);
+
+            let url = format!("{}/api/keys", server_url.trim_end_matches('/'));
+            let body = serde_json::json!({
+                "public_key": info.public_key_hex,
+                "display_name": display_name,
+                "github_repo": github_repo,
+            });
+
+            println!("Registering key {} with {}...", info.key_id, server_url);
+            let resp = reqwest::blocking::Client::new()
+                .post(&url)
+                .json(&body)
+                .send()
+                .context("Failed to connect to server")?;
+
+            if resp.status().is_success() {
+                let data: serde_json::Value = resp.json()?;
+                println!("Registered!");
+                println!("  Key ID:       {}", data["key_id"]);
+                if let Some(n) = data["display_name"].as_str() {
+                    println!("  Display name: {}", n);
+                }
+                if let Some(r) = data["github_repo"].as_str() {
+                    println!("  GitHub repo:  {}", r);
+                }
+            } else {
+                let status = resp.status();
+                let body = resp.text().unwrap_or_default();
+                eprintln!("Registration failed: {} {}", status, body);
+                std::process::exit(1);
+            }
         }
 
         Command::Config { action } => {

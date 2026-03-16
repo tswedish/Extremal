@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use ed25519_dalek::{Signer, SigningKey};
 use ramseynet_graph::RgxfJson;
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +64,8 @@ pub struct ServerClient {
     client: reqwest::Client,
     /// Optional signing key ID to include in submissions.
     key_id: Option<String>,
+    /// Optional Ed25519 signing key for payload signatures.
+    signing_key: Option<Arc<SigningKey>>,
     /// Optional commit hash for provenance tracking.
     commit_hash: Option<String>,
 }
@@ -76,6 +81,7 @@ impl ServerClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
             key_id: None,
+            signing_key: None,
             commit_hash: None,
         }
     }
@@ -83,6 +89,11 @@ impl ServerClient {
     /// Set the signing key ID for all future submissions.
     pub fn set_key_id(&mut self, key_id: String) {
         self.key_id = Some(key_id);
+    }
+
+    /// Set the Ed25519 signing key for payload signatures.
+    pub fn set_signing_key(&mut self, key: SigningKey) {
+        self.signing_key = Some(Arc::new(key));
     }
 
     /// Set the commit hash for all future submissions.
@@ -182,13 +193,23 @@ impl ServerClient {
         graph: RgxfJson,
     ) -> Result<SubmitResponse, WorkerError> {
         let url = format!("{}/api/submit", self.base_url);
+        // Sign the canonical payload if we have a signing key
+        let signature = self.signing_key.as_ref().map(|sk| {
+            let payload = format!(
+                r#"{{"bits_b64":"{}","encoding":"utri_b64_v1","k":{},"ell":{},"n":{}}}"#,
+                graph.bits_b64, k, ell, n
+            );
+            let sig = sk.sign(payload.as_bytes());
+            hex::encode(sig.to_bytes())
+        });
+
         let body = SubmitRequest {
             k,
             ell,
             n,
             graph,
             key_id: self.key_id.clone(),
-            signature: None, // TODO: sign canonical payload
+            signature,
             commit_hash: self.commit_hash.clone(),
         };
 

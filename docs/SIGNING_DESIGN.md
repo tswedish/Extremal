@@ -1,7 +1,7 @@
 # MineGraph Signing System — Design Document
 
-Status: **Design only** — not yet implemented. Build after current experiment
-cycle completes and strategy improvements stabilize.
+Status: **Phase 1 complete.** Key generation, payload signing, server verification,
+key registration, commit hash tracking, and web display are all implemented.
 
 ## Goal
 

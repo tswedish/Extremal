@@ -15,6 +15,14 @@ Workers search for candidate graphs, submit them to a central server for verific
 - [Rust](https://rustup.rs/) (stable)
 - [Node.js](https://nodejs.org/) 20+ with [pnpm](https://pnpm.io/)
 
+### Install the CLI
+
+```bash
+cargo install --path crates/minegraph-cli
+```
+
+This installs the `minegraph` binary for identity management and configuration.
+
 ### Build & Run
 
 ```bash
@@ -32,6 +40,25 @@ Workers search for candidate graphs, submit them to a central server for verific
 ```
 
 The server runs on `http://localhost:3001`. Worker dashboards on `http://localhost:9000` through `http://localhost:9015`.
+
+### Set Up Identity (optional but recommended)
+
+```bash
+# Initialize project-local config
+minegraph init
+
+# Generate a signing keypair
+minegraph keygen --name "my-desktop"
+
+# Register your key with the server
+minegraph register-key --server http://localhost:3001
+
+# Verify your identity
+minegraph whoami
+```
+
+Once configured, workers auto-detect the signing key and sign all submissions.
+The leaderboard shows your key_id next to your discoveries.
 
 ### All Commands
 
@@ -64,7 +91,30 @@ Add `--release` to `server`, `search`, `fleet`, `build`, `test` for optimized bu
 ./run search --k 4 --ell 4 --n 17 --offline --port 8080
 ```
 
-Options: `--strategy {tree|tree2|evo|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`.
+Options: `--strategy {tree|tree2|evo|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`, `--commit-hash HASH`.
+
+## Identity & Signing
+
+Ed25519 signing for submission attribution. Project-local config at `.config/minegraph/`.
+
+```bash
+minegraph init                                     # create config directory
+minegraph keygen --name "my-desktop"               # generate signing keypair
+minegraph whoami                                   # show current identity
+minegraph register-key --server http://localhost:3001  # register with server
+minegraph config show                              # view all settings
+```
+
+Workers auto-detect the signing key from `.config/minegraph/key.json` and sign
+submissions. The `--commit-hash` flag attaches a git commit for provenance.
+
+```bash
+./run search --release --k 5 --ell 5 --n 25 --commit-hash $(git rev-parse --short HEAD)
+```
+
+Server verifies signatures against registered keys. Sig status: `verified`,
+`unregistered` (key not registered), `invalid` (bad signature), `anonymous`
+(no key provided). Web app shows key_id or "anon" on leaderboard entries.
 
 ## Experiment Loop
 
@@ -101,12 +151,13 @@ crates/
   ramseynet-types/        Shared protocol types (GraphCid, RamseyParams, Verdict)
   ramseynet-graph/        RGXF graph encoding, neighbor bitmasks, SHA-256 CID
   ramseynet-verifier/     Ramsey verifier (clique detection, 4-tier scoring, automorphism)
-  ramseynet-ledger/       SQLite ledger (submissions, leaderboards)
+  ramseynet-ledger/       SQLite ledger (submissions, leaderboards, identities)
   ramseynet-server/       Axum HTTP server
   ramseynet-worker-api/   Search strategy trait + job/result schemas
   ramseynet-worker-core/  Worker engine: leaderboard sync, submission, init
   ramseynet-strategies/   Search strategy implementations (tree, tree2, evolutionary SA)
   ramseynet-worker/       CLI binary + worker web-app (visualization dashboard)
+  minegraph-cli/          MineGraph CLI: identity, config, key registration
 web/                      SvelteKit 2 / Svelte 5 frontend
 scripts/                  Fleet, experiment, analysis, gem rendering scripts
 experiments/              Experiment logs (E001–E004)
@@ -128,7 +179,7 @@ Every valid (K,L,n) triple defines a leaderboard of configurable capacity (defau
 
 SvelteKit frontend with:
 - **Homepage** — #1 gem showcase, server health badge
-- **Leaderboards** — browse by (K,L) pairs, drill into ranked tables
+- **Leaderboards** — browse by (K,L) pairs, drill into ranked tables with submitter identity
 - **Graph Visualization** — GemView (diamond matrix with hash-derived palette), MatrixView (adjacency matrix), CircleLayout (circle graph)
 - **Submit** — paste RGXF JSON, live preview, submit for verification
 
@@ -148,6 +199,8 @@ Port 3001, prefix `/api/`. SQLite at `./ramseynet.db`.
 | `/api/submissions/{cid}` | GET | Submission detail: graph, receipt, rank |
 | `/api/verify` | POST | Stateless graph verification |
 | `/api/submit` | POST | Full lifecycle: verify + store + leaderboard admit |
+| `/api/keys` | POST | Register a public key with display_name and github_repo |
+| `/api/keys/{key_id}` | GET | Look up identity info |
 
 ## Key Specs
 
@@ -166,7 +219,7 @@ Port 3001, prefix `/api/`. SQLite at `./ramseynet.db`.
 | 4 — Web Application | Complete | Full interactive frontend with GemView |
 | 5 — Search Worker | Complete | Tree/beam search, evolutionary SA |
 | 5.5 — Leaderboard | Complete | 4-tier scoring, fleet infrastructure, experiment loop |
-| 6 — Identity | Designed | Ed25519 signing (see `docs/SIGNING_DESIGN.md`) |
+| 6 — Identity | Complete | Ed25519 signing, key registration, signature verification |
 
 ## License
 

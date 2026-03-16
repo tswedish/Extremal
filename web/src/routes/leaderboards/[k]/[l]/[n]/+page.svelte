@@ -352,9 +352,9 @@
 								</td>
 								<td class="submitter">
 									{#if entry.key_id}
-										<a href="/api/keys/{entry.key_id}" title={entry.key_id}>
+										<span class="key-id" title={entry.key_id}>
 											{entry.key_id.slice(0, 8)}...
-										</a>
+										</span>
 										{#if entry.commit_hash}
 											<span class="commit" title="commit: {entry.commit_hash}">{entry.commit_hash.slice(0, 7)}</span>
 										{/if}

@@ -404,13 +404,12 @@ async fn submit_graph(
         // Look up the public key from the identities table
         let ledger_for_lookup = state.ledger.clone();
         let kid_clone = kid.clone();
-        let identity = tokio::task::spawn_blocking(move || {
-            ledger_for_lookup.get_identity(&kid_clone)
-        })
-        .await
-        .unwrap()
-        .ok()
-        .flatten();
+        let identity =
+            tokio::task::spawn_blocking(move || ledger_for_lookup.get_identity(&kid_clone))
+                .await
+                .unwrap()
+                .ok()
+                .flatten();
 
         if let Some(ident) = identity {
             let payload = canonical_payload(k, ell, n, &req.graph.bits_b64);
@@ -592,7 +591,12 @@ async fn register_key(
     let github_repo = req.github_repo.clone();
     let kid = key_id.clone();
     let identity = tokio::task::spawn_blocking(move || {
-        ledger.register_key(&kid, &pub_key, display_name.as_deref(), github_repo.as_deref())
+        ledger.register_key(
+            &kid,
+            &pub_key,
+            display_name.as_deref(),
+            github_repo.as_deref(),
+        )
     })
     .await
     .unwrap()

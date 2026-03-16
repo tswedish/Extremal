@@ -302,13 +302,19 @@ async fn main() -> Result<()> {
         None
     };
 
-    // Load signing key if available
-    let signing_key_id = load_signing_key_id(&cli);
-    if let Some(ref kid) = signing_key_id {
-        info!(key_id = %kid, "signing submissions with MineGraph identity");
-    } else {
-        info!("no signing key — submissions will be anonymous");
-    }
+    // Load signing identity if available
+    let identity = load_signing_identity(&cli);
+    let (signing_key_id, signing_key) = match identity {
+        Some(id) => {
+            let has_secret = id.signing_key.is_some();
+            info!(key_id = %id.key_id, can_sign = has_secret, "loaded MineGraph identity");
+            (Some(id.key_id), id.signing_key)
+        }
+        None => {
+            info!("no signing key — submissions will be anonymous");
+            (None, None)
+        }
+    };
 
     run_engine(
         initial_config,
@@ -319,6 +325,7 @@ async fn main() -> Result<()> {
         event_tx,
         cli.server.clone(),
         signing_key_id,
+        signing_key,
         cli.commit_hash.clone(),
     )
     .await?;
@@ -326,24 +333,41 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Try to load a signing key ID from CLI flag or default config location.
-fn load_signing_key_id(cli: &Cli) -> Option<String> {
-    // Check explicit --signing-key flag first
-    if let Some(ref path) = cli.signing_key {
-        return read_key_id_from_file(path);
-    }
-    // Check default location: .config/minegraph/key.json in cwd
-    let default_path = std::env::current_dir()
-        .ok()?
-        .join(".config/minegraph/key.json");
-    if default_path.exists() {
-        return read_key_id_from_file(default_path.to_str()?);
-    }
-    None
+/// Loaded signing identity: key_id + optional secret key for signing.
+struct SigningIdentity {
+    key_id: String,
+    signing_key: Option<ed25519_dalek::SigningKey>,
 }
 
-fn read_key_id_from_file(path: &str) -> Option<String> {
-    let contents = std::fs::read_to_string(path).ok()?;
+/// Try to load a signing identity from CLI flag or default config location.
+fn load_signing_identity(cli: &Cli) -> Option<SigningIdentity> {
+    let path = if let Some(ref p) = cli.signing_key {
+        std::path::PathBuf::from(p)
+    } else {
+        let default = std::env::current_dir()
+            .ok()?
+            .join(".config/minegraph/key.json");
+        if default.exists() {
+            default
+        } else {
+            return None;
+        }
+    };
+
+    let contents = std::fs::read_to_string(&path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
-    json.get("key_id")?.as_str().map(|s| s.to_string())
+    let key_id = json.get("key_id")?.as_str()?.to_string();
+
+    // Try to load the secret key for signing
+    let signing_key = json
+        .get("secret_key")
+        .and_then(|v| v.as_str())
+        .and_then(|hex_str| hex::decode(hex_str).ok())
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+        .map(|arr| ed25519_dalek::SigningKey::from_bytes(&arr));
+
+    Some(SigningIdentity {
+        key_id,
+        signing_key,
+    })
 }

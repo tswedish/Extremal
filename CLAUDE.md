@@ -185,7 +185,34 @@ Port 3001, prefix `/api/`. SQLite at `./ramseynet.db`.
 - `test-vectors/small_graphs.json` — C5, K5, E5, Petersen, Wagner with RGXF encodings
 - `scripts/seed-ledger.sh` — submits test graphs via the API
 
+## Identity & Signing
+
+Ed25519 signing for submission attribution. Project-local config at `.config/minegraph/`.
+
+```bash
+minegraph init                                     # create config directory
+minegraph keygen --name "my-desktop"               # generate signing keypair
+minegraph whoami                                   # show current identity
+minegraph register-key --server http://localhost:3001  # register with server
+minegraph config show                              # view all settings
+```
+
+Workers auto-detect the signing key from `.config/minegraph/key.json` and sign
+submissions. The `--commit-hash` flag attaches a git commit for provenance.
+
+```bash
+./run search --release --k 5 --ell 5 --n 25 --commit-hash $(git rev-parse --short HEAD)
+```
+
+Server verifies signatures against registered keys. Sig status: `verified`,
+`unregistered` (key not registered), `invalid` (bad signature), `anonymous`
+(no key provided). Web app shows key_id or "anon" on leaderboard entries.
+
+**API endpoints:**
+- `POST /api/keys` — register a public key with display_name and github_repo
+- `GET /api/keys/{key_id}` — look up identity info
+
 ## Phase Status
 
-Phases 0–5 complete. Current focus: strategy optimization via experiment loop.
-Phase 6 (ed25519 identity) designed in `docs/SIGNING_DESIGN.md`, not yet built.
+Phases 0–6 complete. Current focus: strategy optimization via experiment loop.
+Phase 6 (ed25519 identity) implemented — see `docs/SIGNING_DESIGN.md`.
