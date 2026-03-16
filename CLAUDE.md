@@ -1,6 +1,7 @@
-# RamseyNet
+# MineGraph (formerly RamseyNet)
 
-Permissionless protocol for distributed Ramsey graph search and deterministic generative graph art.
+Distributed Ramsey graph search, competitive leaderboards, and deterministic
+generative graph art ("MineGraph Gems").
 
 ## Quick Start
 
@@ -10,31 +11,89 @@ Permissionless protocol for distributed Ramsey graph search and deterministic ge
 ./run server      # API server on :3001
 ./run server-log  # API server with file logging
 ./run web-dev     # SvelteKit dev server on :5173
-./run search      # Search worker (--k, --ell, --n for auto-start; omit for idle mode)
+./run search      # Search worker (default: tree2, idle mode)
+./run fleet       # Launch 16-worker fleet (production search)
+./run fleet --sweep  # Fleet with hyperparameter sweep
+./run experiment  # Head-to-head strategy comparison
 ./run seed        # Seed DB with test data
 ```
 
 Other commands: `clippy`, `build`, `web` (production build), `bench` (criterion benchmarks).
 
+Add `--release` to `server`, `search`, `fleet`, `build`, `test` for optimized builds.
+
+### Production Search (the main thing)
+
+```bash
+# Terminal 1: server
+./run server --release --leaderboard-capacity 2000
+
+# Terminal 2: fleet of 16 workers (best known config)
+./run fleet --workers 16 --base-port 9000 \
+  --beam-width 80 --max-depth 12 --sample-bias 0.8
+
+# Or sweep across hyperparameter profiles
+./run fleet --sweep --base-port 9000
+```
+
 ### Search Worker
 
 ```
-./run search --k 3 --ell 3 --n 5                     # all strategies, default server
-./run search --k 3 --ell 3 --n 5 --strategy tree
-./run search --k 5 --ell 5 --n 25 --strategy evo     # evolutionary SA
+./run search --k 5 --ell 5 --n 25                       # tree2 (default), default server
+./run search --k 5 --ell 5 --n 25 --strategy tree       # original beam search
+./run search --k 5 --ell 5 --n 25 --strategy evo        # evolutionary SA
 ./run search --k 3 --ell 4 --n 8 --server http://remote:3001 --max-iters 50000
-./run search --k 4 --ell 4 --n 17 --offline --port 8080  # no server needed
+./run search --k 4 --ell 4 --n 17 --offline --port 8080
 ```
 
 Options: `--strategy {tree|tree2|evo|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`.
 
-**Discovery submission:** All valid graphs found during search (not just the final result) are collected in a bounded, score-sorted buffer (default 1,000, configurable via `--collector-capacity`) and submitted to the server. This is especially useful for tree/beam search which discovers many valid graphs per run.
+## Experiment Loop
 
-**Leaderboard sampling:** When using `--init leaderboard`, the `--sample-bias` parameter (0.0–1.0, default 0.5) controls how graphs are sampled from the server pool. 0.0 = uniform, 1.0 = strongly prefer top-ranked. `--leaderboard-sample-size` (default 100) controls how many graphs are fetched for the seed pool.
+The standard development cycle for improving search strategies:
 
-**Incremental CID sync:** The worker uses the `/api/leaderboards/{k}/{l}/{n}/cids?since=<timestamp>` endpoint to incrementally sync known CIDs from the server, fetching only newly admitted entries after the first full sync. This avoids downloading the full leaderboard each round.
+1. **Identify** the next algorithmic change (see `docs/LITERATURE_AND_IDEAS.md`)
+2. **Implement** the change as a new strategy or tree2 variant
+3. **Run** `./run fleet --sweep` or `./run experiment` against production server
+4. **Analyze** with `./scripts/analyze_experiment.sh logs/fleet-*/`
+5. **Log** results in `experiments/ENNN.md`
+6. **Decide** — promote the winner, identify next change, repeat
 
-**Cross-round state:** Strategies can persist opaque state across rounds via `carry_state` on `SearchJob`/`SearchResult`. The evo strategy uses this to maintain its population across server sync boundaries.
+### Fleet Commands
+
+```bash
+# Production fleet (16 workers, best config)
+./run fleet --workers 16 --base-port 9000 \
+  --beam-width 80 --max-depth 12 --sample-bias 0.8
+
+# Hyperparameter sweep (6 profiles, auto-distributed)
+./run fleet --sweep --base-port 9000
+
+# Check progress without stopping
+cat logs/fleet-*/status.txt
+
+# Full analysis after stopping
+./scripts/analyze_experiment.sh logs/fleet-*/
+```
+
+### Key Metrics
+
+- **Admits/hr** — leaderboard admissions per hour (primary measure of strategy quality)
+- **Admit/Wk** — admissions per worker (for comparing profiles in a sweep)
+- **Admission rate** — % of submissions that get admitted (indicates leaderboard headroom)
+- **Disc/Rnd** — discoveries per round (indicates search breadth)
+
+## Current Strategy Status
+
+| Strategy | ID | Status | Description |
+|----------|-----|--------|-------------|
+| **tree2** | `tree2` | **Production default** | Incremental beam search with bitwise neighbor bitmasks, flip-score-unflip, 64-bit fingerprint dedup |
+| tree | `tree` | Reference/ablation | Original beam search with full clique recount per candidate. 11x slower than tree2. |
+| evo | `evo` | Experimental | Evolutionary SA with population, cross-round persistence, leaderboard immigrant injection |
+
+**Best known hyperparameters** (from E004, 7-hour sweep):
+- beam_width=80, max_depth=12, sample_bias=0.8 ("focused" profile)
+- Top-heavy leaderboard sampling (bias=0.8) is the single most important knob
 
 ## Architecture
 
@@ -45,14 +104,14 @@ Rust workspace (`crates/`) + SvelteKit 2 (`web/`).
 | Crate | Purpose |
 |-------|---------|
 | `ramseynet-types` | Shared newtypes: GraphCid, RamseyParams, Verdict |
-| `ramseynet-graph` | RGXF encode/decode, AdjacencyMatrix, SHA-256 CID |
+| `ramseynet-graph` | RGXF encode/decode, AdjacencyMatrix, neighbor bitmasks, SHA-256 CID |
 | `ramseynet-verifier` | Clique/independent-set detection, 4-tier scoring, automorphism |
-| `ramseynet-ledger` | SQLite ledger: submissions, receipts, leaderboards, events |
+| `ramseynet-ledger` | SQLite ledger: submissions, receipts, leaderboards |
 | `ramseynet-server` | Axum REST API, full submit lifecycle |
 | `ramseynet-worker-api` | Search strategy trait, job/result schemas, observer interface |
 | `ramseynet-worker-core` | Worker engine: leaderboard sync, submission pipeline, init |
-| `ramseynet-strategies` | Search strategy implementations (tree, tree2, evolutionary SA) |
-| `ramseynet-worker` | CLI binary + worker web-app (visualization) |
+| `ramseynet-strategies` | Search strategies: tree, tree2, evo; shared incremental module |
+| `ramseynet-worker` | CLI binary + worker web-app (visualization dashboard) |
 
 ## Leaderboard System
 
@@ -72,21 +131,20 @@ K ≤ L canonical form enforced everywhere (R(K,L) = R(L,K)).
 
 | Component | Purpose |
 |-----------|---------|
+| `GemView` | Diamond adjacency matrix with hash-derived palette (MineGraph Gem) |
 | `MatrixView` | Canvas adjacency matrix with witness overlay |
 | `CircleLayout` | SVG circle graph (ORS-1.0) |
 | `GraphThumb` | Small canvas thumbnail of adjacency matrix |
 | `SubmitForm` | K/L/N inputs + RGXF paste + preview + submit |
 
-**Utils:** `rgxf.ts` (client-side RGXF decoder), `api.ts` (typed fetch wrappers).
-
 **Routes:**
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Homepage with health badge, nav cards |
+| `/` | Homepage with #1 gem showcase, health badge, nav cards |
 | `/leaderboards` | Browse by (K,L) pairs, drill into n values |
-| `/leaderboards/[k]/[l]/[n]` | Paginated ranked table with score columns, top graph viz, auto-refresh via polling |
-| `/submissions/[cid]` | Submission detail: verdict, witness, graph viz, rank |
+| `/leaderboards/[k]/[l]/[n]` | Ranked table with gem + matrix + circle viz for top graph |
+| `/submissions/[cid]` | Submission detail: verdict, witness, gem + graph viz, rank |
 | `/submit` | Standalone graph submission form |
 
 ## Server API
@@ -105,25 +163,29 @@ Port 3001, prefix `/api/`. SQLite at `./ramseynet.db`.
 | `/api/submissions/{cid}` | GET | Submission detail: graph, receipt, rank |
 | `/api/verify` | POST | Stateless graph verification |
 | `/api/submit` | POST | Full lifecycle: verify + store + leaderboard admit |
-### Submit Request/Response
 
-```json
-// POST /api/submit
-{ "k": 3, "ell": 3, "n": 5, "graph": { "n": 5, "encoding": "utri_b64_v1", "bits_b64": "..." } }
-// Response
-{ "graph_cid": "...", "verdict": "accepted", "admitted": true, "rank": 1, "score": {...} }
-```
+## Key Documents
+
+| File | Purpose |
+|------|---------|
+| `NEXT_STEPS.md` | Current priorities and what to build next |
+| `experiments/E001-E004.md` | Experiment logs with results and analysis |
+| `docs/LITERATURE_AND_IDEAS.md` | Paper summaries + prioritized strategy ideas |
+| `docs/STRATEGY_DEV_PLAN.md` | Strategy history and tree2 improvement roadmap |
+| `docs/SIGNING_DESIGN.md` | Ed25519 identity system design (not yet built) |
 
 ## Key Specs
 
 - **RGXF**: Packed upper-triangular adjacency bitstring, SHA-256 content addressed
 - **OVWC-1**: Verifier contract — JSON stdin/stdout, exit 0
+- **Gem rendering**: `minegraph_gem_v3.py` (Python) and `GemView.svelte` (web component)
 
 ## Test Data
 
 - `test-vectors/small_graphs.json` — C5, K5, E5, Petersen, Wagner with RGXF encodings
-- `scripts/seed-ledger.sh` — submits test graphs via the API (no challenge creation)
+- `scripts/seed-ledger.sh` — submits test graphs via the API
 
 ## Phase Status
 
-Phases 0–5 complete. Phase 6 (ed25519 identity, duels, libp2p) is next.
+Phases 0–5 complete. Current focus: strategy optimization via experiment loop.
+Phase 6 (ed25519 identity) designed in `docs/SIGNING_DESIGN.md`, not yet built.

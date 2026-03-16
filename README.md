@@ -1,8 +1,12 @@
-# RamseyNet
+# MineGraph
 
-A permissionless protocol for distributed Ramsey graph search and deterministic generative graph art.
+Distributed Ramsey graph search, competitive leaderboards, and deterministic generative graph art ("MineGraph Gems").
 
-RamseyNet is a peer-to-peer network where anyone can propose and verify Ramsey graphs, persist artifacts in content-addressed storage, and derive public leaderboards and Pareto frontiers without central control.
+## What is this?
+
+MineGraph searches for [Ramsey graphs](https://en.wikipedia.org/wiki/Ramsey%27s_theorem) — graphs that avoid monochromatic cliques and independent sets. The flagship target is R(5,5) on n=25 vertices, where 43 ≤ R(5,5) ≤ 48 is an open problem in combinatorics.
+
+Workers search for candidate graphs, submit them to a central server for verification and scoring, and compete on leaderboards. Interesting graphs become visual artifacts — deterministic pixel-art "MineGraph Gems."
 
 ## Quick Start
 
@@ -13,23 +17,21 @@ RamseyNet is a peer-to-peer network where anyone can propose and verify Ramsey g
 
 ### Build & Run
 
-```
+```bash
 # Full CI: clippy + tests + web build
 ./run ci
 
-# Start the API server (with logging)
-./run server-log
+# Start the API server
+./run server --release
 
-# In another terminal — start the web dev server
-./run web-dev
+# In another terminal — start a search fleet
+./run fleet --workers 16 --base-port 9000
 
-# In a third terminal — seed test data
-./run seed
+# Or a single worker
+./run search --release --k 5 --ell 5 --n 25 --port 8080
 ```
 
-The server runs on `http://localhost:3001` and the web app on `http://localhost:5173`.
-
-See **[TESTING.md](TESTING.md)** for a full interactive walkthrough.
+The server runs on `http://localhost:3001`. Worker dashboards on `http://localhost:9000` through `http://localhost:9015`.
 
 ### All Commands
 
@@ -42,66 +44,93 @@ See **[TESTING.md](TESTING.md)** for a full interactive walkthrough.
 ./run web-dev     # Web dev server (:5173)
 ./run server      # API server (:3001)
 ./run server-log  # API server with file logging
-./run search      # Search worker (--k, --ell, --n for auto-start; omit for idle mode)
+./run search      # Search worker (default: tree2, idle mode)
+./run fleet       # Launch 16-worker fleet (production search)
+./run fleet --sweep  # Fleet with hyperparameter sweep
+./run experiment  # Head-to-head strategy comparison
 ./run bench       # Criterion benchmarks (verifier/scoring)
 ./run seed        # Seed test data
 ```
 
+Add `--release` to `server`, `search`, `fleet`, `build`, `test` for optimized builds.
+
 ### Search Worker
 
-```
-./run search --k 3 --ell 3 --n 5                     # all strategies, default server
-./run search --k 3 --ell 3 --n 5 --strategy tree
-./run search --k 4 --ell 4 --n 17 --offline --port 8080  # no server needed
-./run search --k 5 --ell 5 --n 25 --init leaderboard --sample-bias 0.3
+```bash
+./run search --k 5 --ell 5 --n 25                       # tree2 (default), default server
+./run search --k 5 --ell 5 --n 25 --strategy tree       # original beam search
+./run search --k 5 --ell 5 --n 25 --strategy evo        # evolutionary SA
+./run search --k 3 --ell 4 --n 8 --server http://remote:3001 --max-iters 50000
+./run search --k 4 --ell 4 --n 17 --offline --port 8080
 ```
 
 Options: `--strategy {tree|tree2|evo|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`.
+
+## Experiment Loop
+
+The development cycle for improving search strategies:
+
+1. **Identify** the next algorithmic change (see `docs/LITERATURE_AND_IDEAS.md`)
+2. **Implement** the change as a new strategy or tree2 variant
+3. **Run** `./run fleet --sweep` or `./run experiment` against the production server
+4. **Analyze** with `./scripts/analyze_experiment.sh logs/fleet-*/`
+5. **Log** results in `experiments/ENNN.md`
+6. **Decide** — promote the winner, identify next change, repeat
+
+### Fleet Commands
+
+```bash
+# Production fleet (16 workers, best known config)
+./run fleet --workers 16 --base-port 9000 \
+  --beam-width 80 --max-depth 12 --sample-bias 0.8
+
+# Hyperparameter sweep (6 profiles, auto-distributed)
+./run fleet --sweep --base-port 9000
+
+# Check progress without stopping
+cat logs/fleet-*/status.txt
+
+# Full analysis after stopping
+./scripts/analyze_experiment.sh logs/fleet-*/
+```
 
 ## Project Structure
 
 ```
 crates/
   ramseynet-types/        Shared protocol types (GraphCid, RamseyParams, Verdict)
-  ramseynet-graph/        RGXF graph encoding + SHA-256 content addressing
+  ramseynet-graph/        RGXF graph encoding, neighbor bitmasks, SHA-256 CID
   ramseynet-verifier/     Ramsey verifier (clique detection, 4-tier scoring, automorphism)
-  ramseynet-ledger/       SQLite ledger (submissions, leaderboards, events)
+  ramseynet-ledger/       SQLite ledger (submissions, leaderboards)
   ramseynet-server/       Axum HTTP server
   ramseynet-worker-api/   Search strategy trait + job/result schemas
   ramseynet-worker-core/  Worker engine: leaderboard sync, submission, init
-  ramseynet-strategies/   Search strategy implementations (tree/beam, evolutionary SA)
-  ramseynet-worker/       CLI binary + worker web-app (visualization)
-web/                      SvelteKit 2 / Svelte 5 frontend (server web-app)
-test-vectors/             Shared test data (small_graphs.json)
-scripts/                  Dev helpers
+  ramseynet-strategies/   Search strategy implementations (tree, tree2, evolutionary SA)
+  ramseynet-worker/       CLI binary + worker web-app (visualization dashboard)
+web/                      SvelteKit 2 / Svelte 5 frontend
+scripts/                  Fleet, experiment, analysis, gem rendering scripts
+experiments/              Experiment logs (E001–E004)
+docs/                     Design docs, literature review, strategy roadmap
+test-vectors/             Shared test data
 ```
 
 ## Leaderboard System
 
-Every valid (K,L,n) triple implicitly defines a leaderboard of capacity 10,000 (configurable via `--leaderboard-capacity` on the server). No explicit "challenges" — submit directly with `{k, ell, n, graph}`. Capacity can be changed at server restart — shrinking trims the lowest-ranked entries automatically.
+Every valid (K,L,n) triple defines a leaderboard of configurable capacity (default 500, production uses 2000). Submit directly with `{k, ell, n, graph}`.
 
 **Scoring** (4-tier lexicographic, lower is better):
-- **T1**: `(max(C_omega, C_alpha), min(C_omega, C_alpha))` — clique counts, lowest wins
-- **T2**: Goodman gap — distance from Goodman's minimum monochromatic triangles, lowest wins (0 = optimal)
-- **T3**: `|Aut(G)|` — automorphism group order, highest wins
-- **T4**: CID — deterministic tiebreaker, smallest wins
-
-K ≤ L canonical form enforced everywhere (R(K,L) = R(L,K)).
+- **T1**: `(max(C_omega, C_alpha), min(C_omega, C_alpha))` — clique counts
+- **T2**: Goodman gap — distance from theoretical minimum triangles
+- **T3**: `|Aut(G)|` — automorphism group order (highest wins)
+- **T4**: CID — deterministic tiebreaker
 
 ## Web Application
 
-The SvelteKit frontend provides:
-
-- **Homepage** — Server health badge, navigation cards
-- **Leaderboards** (`/leaderboards`) — Browse by (K,L) pair, drill into n values
-- **Leaderboard Detail** (`/leaderboards/[k]/[l]/[n]`) — Paginated ranked table with score columns (C_max, C_min, Goodman gap, |Aut|), top graph visualization, auto-refresh via polling, CSV export
-- **Submission Detail** (`/submissions/[cid]`) — Full graph details: verdict, witness, rank, score breakdown (including Goodman number/gap/minimum), matrix + circle visualization
-- **Submit** (`/submit`) — Enter K/L/N, paste RGXF JSON, see live matrix preview, submit for verification
-
-### Graph Visualization
-
-- **MatrixView** — Canvas-rendered adjacency matrix with witness overlay (red highlights for violating cliques/independent sets)
-- **CircleLayout** — SVG circle graph with deterministic vertex placement (ORS-1.0)
+SvelteKit frontend with:
+- **Homepage** — #1 gem showcase, server health badge
+- **Leaderboards** — browse by (K,L) pairs, drill into ranked tables
+- **Graph Visualization** — GemView (diamond matrix with hash-derived palette), MatrixView (adjacency matrix), CircleLayout (circle graph)
+- **Submit** — paste RGXF JSON, live preview, submit for verification
 
 ## Server API
 
@@ -120,19 +149,11 @@ Port 3001, prefix `/api/`. SQLite at `./ramseynet.db`.
 | `/api/verify` | POST | Stateless graph verification |
 | `/api/submit` | POST | Full lifecycle: verify + store + leaderboard admit |
 
-### Submit Request/Response
-
-```json
-// POST /api/submit
-{ "k": 3, "ell": 3, "n": 5, "graph": { "n": 5, "encoding": "utri_b64_v1", "bits_b64": "..." } }
-// Response
-{ "graph_cid": "...", "verdict": "accepted", "admitted": true, "rank": 1, "score": {...} }
-```
-
 ## Key Specs
 
 - **RGXF**: Packed upper-triangular adjacency bitstring, SHA-256 content addressed
 - **OVWC-1**: Verifier contract — JSON stdin/stdout, exit 0
+- **Gem rendering**: `minegraph_gem_v3.py` (Python) and `GemView.svelte` (web component)
 
 ## Phase Status
 
@@ -140,12 +161,12 @@ Port 3001, prefix `/api/`. SQLite at `./ramseynet.db`.
 |-------|--------|-------------|
 | 0 — Scaffolding | Complete | Workspace, SvelteKit skeleton, CI |
 | 1 — Graph Library | Complete | RGXF, AdjacencyMatrix, CID |
-| 2 — Verifier | Complete | Clique detection, OVWC-1 WASM |
+| 2 — Verifier | Complete | Clique detection, OVWC-1 |
 | 3 — Server + Ledger | Complete | Axum API, SQLite |
-| 4 — Web Application | Complete | Full interactive frontend |
+| 4 — Web Application | Complete | Full interactive frontend with GemView |
 | 5 — Search Worker | Complete | Tree/beam search, evolutionary SA |
-| 5.5 — Leaderboard | Complete | 4-tier scoring (Goodman gap), 10k-cap leaderboards, pagination |
-| 6 — P2P Networking | Pending | ed25519 identity, libp2p, duels |
+| 5.5 — Leaderboard | Complete | 4-tier scoring, fleet infrastructure, experiment loop |
+| 6 — Identity | Designed | Ed25519 signing (see `docs/SIGNING_DESIGN.md`) |
 
 ## License
 
