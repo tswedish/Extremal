@@ -26,7 +26,7 @@ Other commands: `clippy`, `build`, `web` (production build), `bench` (criterion 
 ./run search --k 4 --ell 4 --n 17 --offline --port 8080  # no server needed
 ```
 
-Options: `--strategy {tree|evo|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`.
+Options: `--strategy {tree|tree2|evo|all}`, `--init {perturbed-paley|paley|random|leaderboard}`, `--noise-flips N`, `--max-iters N`, `--beam-width N`, `--max-depth N`, `--port PORT`, `--offline`, `--no-backoff`, `--sample-bias F`, `--leaderboard-sample-size N`, `--collector-capacity N`, `--max-known-cids N`.
 
 **Discovery submission:** All valid graphs found during search (not just the final result) are collected in a bounded, score-sorted buffer (default 1,000, configurable via `--collector-capacity`) and submitted to the server. This is especially useful for tree/beam search which discovers many valid graphs per run.
 
@@ -51,7 +51,7 @@ Rust workspace (`crates/`) + SvelteKit 2 (`web/`).
 | `ramseynet-server` | Axum REST API, full submit lifecycle |
 | `ramseynet-worker-api` | Search strategy trait, job/result schemas, observer interface |
 | `ramseynet-worker-core` | Worker engine: leaderboard sync, submission pipeline, init |
-| `ramseynet-strategies` | Search strategy implementations (tree/beam search, evolutionary SA) |
+| `ramseynet-strategies` | Search strategy implementations (tree, tree2, evolutionary SA) |
 | `ramseynet-worker` | CLI binary + worker web-app (visualization) |
 
 ## Leaderboard System

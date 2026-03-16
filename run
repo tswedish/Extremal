@@ -15,6 +15,7 @@
 #   search     Search worker (--k, --ell, --n for auto-start; omit for idle mode)
 #   bench      Criterion benchmarks for verifier/scoring
 #   seed       Seed DB with test graphs
+#   experiment Head-to-head strategy experiment (--a tree --b tree2)
 #
 # Add --release to build/server/search for optimized (5-20x faster) builds.
 

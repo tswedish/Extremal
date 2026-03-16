@@ -110,8 +110,11 @@ case "$cmd" in
     echo "=== Running E2E tests ==="
     bash "$REPO/scripts/e2e-test.sh" "$@"
     ;;
+  experiment)
+    bash "$REPO/scripts/experiment.sh" "$@"
+    ;;
   *)
-    echo "Usage: wsl-dev.sh {test|clippy|build|web|web-dev|ci|server|server-log|search|bench|seed|e2e}"
+    echo "Usage: wsl-dev.sh {test|clippy|build|web|web-dev|ci|server|server-log|search|bench|seed|e2e|experiment}"
     echo "  Add --release for optimized builds (server, search, build, test)"
     exit 1
     ;;

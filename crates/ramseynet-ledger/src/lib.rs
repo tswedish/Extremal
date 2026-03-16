@@ -33,7 +33,7 @@ pub struct Ledger {
 
 impl Ledger {
     /// Open (or create) a SQLite database at the given path and initialize
-    /// the schema. Uses the default capacity (10,000).
+    /// the schema. Uses the default capacity (500).
     pub fn open(path: &str) -> Result<Self, LedgerError> {
         Self::open_with_capacity(path, DEFAULT_LEADERBOARD_CAPACITY)
     }

@@ -13,3 +13,4 @@ ramseynet-verifier = { path = "../ramseynet-verifier" }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tracing = { workspace = true }

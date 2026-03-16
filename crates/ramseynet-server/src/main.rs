@@ -17,7 +17,7 @@ struct Config {
 
     /// Maximum entries per (k, ell, n) leaderboard. On startup, any
     /// leaderboard exceeding this capacity is trimmed to fit.
-    #[arg(long, default_value = "10000")]
+    #[arg(long, default_value = "500")]
     leaderboard_capacity: u32,
 
     /// Increase log verbosity (-v info, -vv debug, -vvv trace)

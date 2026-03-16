@@ -3,7 +3,7 @@
 Living document for developing new search strategies, running them against prod,
 and evolving toward agentic strategy iteration.
 
-**Status:** Phase 1 — EvoSearch implemented, testing against R(5,5) n=25
+**Status:** Phase 1 — Tree2 winning 4.6x over tree1 on R(5,5) n=25. Iterating.
 
 ---
 
@@ -122,6 +122,158 @@ counts, and discovery count every 500 iterations.
   triangle count as Goodman gap proxy to guide toward better-scoring graphs
 - **Adaptive temperature:** adjust based on acceptance rate rather than fixed schedule
 - **Multi-flip mutations:** flip k edges at once, with k adaptive to plateau detection
+
+---
+
+## Tree2: Incremental Beam Search — Implemented
+
+### What was built
+
+**Tree2Search** (`crates/ramseynet-strategies/src/tree2.rs`): Same beam search
+skeleton as tree1, but with three key optimizations making each candidate
+evaluation ~10-30x cheaper.
+
+**Key differences from tree1:**
+
+| Aspect | tree1 | tree2 |
+|--------|-------|-------|
+| Candidate eval | Clone parent + full `count_cliques` x2 + complement | Flip-in-place + incremental delta + unflip |
+| Dedup | SHA-256 CID (~200ns) | 64-bit XOR-fold fingerprint (~5ns) |
+| Complement | Rebuilt from scratch per candidate | Carried per beam entry, maintained incrementally |
+| Allocations per candidate | 1 clone + 1 complement | 0 (flip-score-unflip in place) |
+| Full CID computation | Every candidate | Only valid discoveries |
+| Full recount | Never (trusts incremental) | Once per beam entry when materializing new beam |
+
+**Shared infrastructure:** Incremental violation counting functions extracted
+into `crates/ramseynet-strategies/src/incremental.rs`, shared between evo and
+tree2: `violation_delta`, `count_cliques_through_edge`,
+`count_cliques_through_edge_assuming`, `fast_fingerprint`.
+
+**Debug logging:** Per-depth-level summary via `tracing::debug!`:
+```
+tree2: depth complete depth=3 beam_size=100 candidates=28500 dedup_hits=1200
+  best_score=2 worst_score=15 discoveries=0 seen_set=85000 elapsed_ms=340
+```
+Visible with `RUST_LOG=ramseynet_strategies=debug` or `./run search -v`.
+
+### Tree2 Improvement Roadmap
+
+| Version | Change | Expected Impact |
+|---------|--------|----------------|
+| **v0** (done) | Incremental delta + flip-score-unflip + cheap fingerprint + complement per beam entry | ~10-30x faster per candidate eval |
+| **v1** | Diversity-aware beam selection (keep structurally diverse candidates, not just lowest score) | Better exploration of different graph basins |
+| **v2** | Multi-flip mutations (flip 2-3 edges per candidate) | Escape local minima, deeper search per depth |
+| **v3** | Adaptive beam width (widen on score plateaus, narrow when one dominates) | Better resource allocation |
+| **v4** | Carry state across rounds (persist beam as population) | Continuous improvement like evo |
+| **v5** | Hybrid: beam search to find valid graphs, then SA refinement within valid space | Optimize score tiers, not just find valid graphs |
+
+### Experiment 1 Results: tree vs tree2 (2026-03-15)
+
+Duration ~4.5 hours, R(5,5) n=25, both `--init leaderboard`, release mode.
+
+| Metric | tree | tree2 | Ratio |
+|--------|------|-------|-------|
+| Rounds completed | 373 | 2,109 | **5.7x** |
+| Round time | ~5,000ms | ~440ms | **11x faster** |
+| Total discoveries | 1.5M | 8.7M | **5.7x** |
+| Leaderboard admits | 1,051 | 4,885 | **4.6x** |
+| Admission rate | 54% | 76% | tree2 higher |
+| Discoveries/round | ~4,080 | ~3,920 | ~same |
+
+**Conclusion:** Tree2 v0 is a decisive improvement. The incremental delta approach
+delivers ~11x faster rounds and 4.6x more leaderboard admissions. The higher
+admission rate (76% vs 54%) suggests tree2 finds more diverse graphs, not just
+more of the same. Next priority: score optimization and diversity-aware beam
+selection, since the leaderboard threshold is now high enough that finding
+*any* valid graph is less useful than finding *better-scoring* ones.
+
+---
+
+## Competitive Iteration Framework
+
+The core development loop: iteratively build better strategies by pitting them
+against each other at the current frontier. Each experiment produces a "loss
+gradient" — concrete data on what works and what doesn't, which informs the
+next strategy modification.
+
+### Methodology
+
+1. **Run two workers** (strategy A vs B) against the same server/leaderboard
+2. **Collect structured logs** (`round_summary` lines) over 30-60 minutes
+3. **Compare key metrics**: discoveries/min, admissions/min, best score
+4. **Analyze** what the winning strategy does differently
+5. **Modify** the losing strategy (or create a new variant)
+6. **Repeat**
+
+### Key Metrics (from `round_summary` log lines)
+
+| Metric | What it means | How to compute |
+|--------|--------------|----------------|
+| **Discoveries/min** | Valid graphs found per wall-minute | `total_discoveries / elapsed_minutes` |
+| **Admissions/min** | Graphs admitted to leaderboard per wall-minute | `total_admitted / elapsed_minutes` |
+| **Admission rate** | Fraction of submissions that get admitted | `total_admitted / total_submitted` |
+| **Round time** | How long each search round takes | `elapsed_ms` per round_summary |
+| **Depth efficiency** (tree2) | Per-depth-level stats from debug logs | grep `tree2: depth complete` |
+
+### Analyzing Experiment Logs
+
+```bash
+# Extract round summaries for a specific strategy
+grep 'round_summary' logs/worker-tree-*.log
+
+# Count total admissions
+grep -c 'admitted to leaderboard' logs/worker-tree-*.log
+
+# Compare discoveries/min between two runs
+grep 'round_summary' logs/worker-tree-*.log | tail -1
+grep 'round_summary' logs/worker-tree2-*.log | tail -1
+
+# Tree2 depth-level analysis (run worker with -v)
+grep 'tree2: depth complete' logs/worker-tree2-*.log
+```
+
+### Leaderboard Sizing Decisions
+
+| Leaderboard Size | When to use | Effect on competition |
+|-----------------|-------------|----------------------|
+| **50** | Early development, quick feedback | Threshold rises fast; only the best graphs survive. Good for testing score optimization. |
+| **500** (current default) | Standard competition | Healthy balance — enough room for diversity, but threshold is meaningful. |
+| **5,000+** | Populating a new (k,ell,n) target | Easy admission, good for collecting diverse valid graphs. Tighten later. |
+
+**When to grow:** If admission rate drops below ~5% for both strategies, the
+leaderboard is saturated and neither strategy is improving. Options:
+- Increase leaderboard capacity (more room at the bottom)
+- Switch to a harder target (larger n)
+- Focus on score optimization rather than finding new valid graphs
+
+**When to shrink:** If the leaderboard has many low-quality entries from the
+initial flood, shrink it to force strategies to compete on quality. The server
+trims automatically on restart with `--leaderboard-capacity N`.
+
+### Running an Experiment
+
+```bash
+# 1. Start the server (release mode, port 3002)
+./run server --release --port 3002
+
+# 2. Start worker A (tree, logging to file)
+./run search --release --strategy tree --k 5 --ell 5 --n 25 \
+  --server http://localhost:3002 --init leaderboard --port 8080 \
+  2>&1 | tee logs/worker-tree-$(date +%Y%m%d-%H%M%S).log &
+
+# 3. Start worker B (tree2, logging to file)
+./run search --release --strategy tree2 --k 5 --ell 5 --n 25 \
+  --server http://localhost:3002 --init leaderboard --port 8081 \
+  2>&1 | tee logs/worker-tree2-$(date +%Y%m%d-%H%M%S).log &
+
+# 4. Watch dashboards
+#    tree:  http://localhost:8080
+#    tree2: http://localhost:8081
+
+# 5. After 30-60 min, Ctrl+C both workers and analyze:
+grep 'round_summary' logs/worker-tree-*.log | tail -5
+grep 'round_summary' logs/worker-tree2-*.log | tail -5
+```
 
 ---
 
