@@ -288,17 +288,25 @@ OAuth. This matches the "permissionless protocol" ethos.
 
 ## Open questions
 
+(user reply inline --)
+
 1. **Should unregistered keys be allowed?** If someone signs a submission
    with a key that isn't registered, should the server: (a) accept and
    store the key_id anyway, (b) reject, or (c) accept but mark as
    "unverified"? I lean toward (c) for permissionless ethos.
 
+-- accept and store the key_id, and if someone registers in the future, it will be linked. Mark as "unregistered". Same as for anon.
+
 2. **Should the key_id be part of the leaderboard ranking?** Currently
    ranking is purely by graph score. Adding identity doesn't change
    ranking, but it affects how ties are displayed.
 
+-- only rank by graph score. Ties are broken by first to claim timestamp on the server. CID are unique, so existing hash size tiebreaker still applies.
+
 3. **Namespace for display names?** Should display names be unique?
    Probably yes to avoid confusion, but enforcement can wait for v2.
+
+-- when a user registers, they can specify a display name. Since the key_id will be unique, we don't worry about uniqueness of user names as we'll always be able to associate with key_id and can display appropriately.
 
 ## References
 
