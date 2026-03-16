@@ -3,7 +3,7 @@
 Living document for developing new search strategies, running them against prod,
 and evolving toward agentic strategy iteration.
 
-**Status:** Phase 1 — Tree2 winning 4.6x over tree1 on R(5,5) n=25. Iterating.
+**Status:** Phase 1 — Tree2 with bitwise acceleration deployed. Testing speedup vs pre-bitwise baseline.
 
 ---
 
@@ -161,6 +161,7 @@ Visible with `RUST_LOG=ramseynet_strategies=debug` or `./run search -v`.
 | Version | Change | Expected Impact |
 |---------|--------|----------------|
 | **v0** (done) | Incremental delta + flip-score-unflip + cheap fingerprint + complement per beam entry | ~10-30x faster per candidate eval |
+| **v0.5** (done) | Bitwise neighbor bitmasks: AND/popcount replaces per-vertex edge() calls + recursive backtracking replaced by nested bit iteration | Additional ~5-10x on top of v0 |
 | **v1** | Diversity-aware beam selection (keep structurally diverse candidates, not just lowest score) | Better exploration of different graph basins |
 | **v2** | Multi-flip mutations (flip 2-3 edges per candidate) | Escape local minima, deeper search per depth |
 | **v3** | Adaptive beam width (widen on score plateaus, narrow when one dominates) | Better resource allocation |

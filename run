@@ -16,6 +16,7 @@
 #   bench      Criterion benchmarks for verifier/scoring
 #   seed       Seed DB with test graphs
 #   experiment Head-to-head strategy experiment (--a tree --b tree2)
+#   fleet      Launch N workers (--workers 16 --strategy tree2)
 #
 # Add --release to build/server/search for optimized (5-20x faster) builds.
 

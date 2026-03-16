@@ -45,3 +45,5 @@ logs/
 /package-lock.json
 /challenges-snap.yaml
 *.yml
+.venv/
+gems/

@@ -30,12 +30,14 @@ use ramseynet_worker_api::{
 };
 use tracing::debug;
 
-use crate::incremental::{fast_fingerprint, violation_delta};
+use crate::incremental::{fast_fingerprint, violation_delta_bitwise, NeighborSet};
 
-/// A beam entry: graph + complement + violation counts.
+/// A beam entry: graph + complement + neighbor bitmasks + violation counts.
 struct BeamEntry {
     graph: AdjacencyMatrix,
     comp: AdjacencyMatrix,
+    adj_nbrs: NeighborSet,
+    comp_nbrs: NeighborSet,
     violations: u64,
     kc: u64,
     ei: u64,
@@ -44,22 +46,29 @@ struct BeamEntry {
 impl BeamEntry {
     fn from_graph(graph: AdjacencyMatrix, k: u32, ell: u32) -> Self {
         let comp = graph.complement();
+        let adj_nbrs = NeighborSet::from_adj(&graph);
+        let comp_nbrs = NeighborSet::from_adj(&comp);
         let kc = count_cliques(&graph, k);
         let ei = count_cliques(&comp, ell);
         BeamEntry {
             graph,
             comp,
+            adj_nbrs,
+            comp_nbrs,
             violations: kc + ei,
             kc,
             ei,
         }
     }
 
-    /// Flip edge (u,v) in both graph and complement (in-place).
+    /// Flip edge (u,v) in graph, complement, and both neighbor sets.
+    #[inline]
     fn flip(&mut self, u: u32, v: u32) {
         let cur = self.graph.edge(u, v);
         self.graph.set_edge(u, v, !cur);
         self.comp.set_edge(u, v, cur);
+        self.adj_nbrs.flip_edge(u, v);
+        self.comp_nbrs.flip_edge(u, v);
     }
 }
 
@@ -251,9 +260,9 @@ impl SearchStrategy for Tree2Search {
                     // Unflip to compute delta from the original parent state
                     parent.flip(u, v);
 
-                    // Incremental delta (zero allocation)
+                    // Incremental delta — bitwise, zero allocation
                     let (delta_kc, delta_ei) =
-                        violation_delta(&parent.graph, &parent.comp, k, ell, u, v);
+                        violation_delta_bitwise(&parent.adj_nbrs, &parent.comp_nbrs, k, ell, u, v);
                     let new_kc = (parent.kc as i64 + delta_kc).max(0) as u64;
                     let new_ei = (parent.ei as i64 + delta_ei).max(0) as u64;
                     let new_violations = new_kc + new_ei;
@@ -347,9 +356,13 @@ impl SearchStrategy for Tree2Search {
             candidates.sort_by_key(|&(_, _, v, _, _)| v);
             candidates.truncate(beam_width);
 
-            // Materialize the new beam: clone parent + apply flip
+            // Materialize the new beam: clone parent + apply flip + rebuild masks.
+            // Trust the incremental kc/ei values (verified by tests against
+            // the scalar oracle). Full recount only every 5 depths for drift
+            // correction.
+            let do_full_recount = depth.is_multiple_of(5);
             let mut new_beam: Vec<BeamEntry> = Vec::with_capacity(candidates.len());
-            for &(parent_idx, edge_idx, _new_v, _new_kc, _new_ei) in &candidates {
+            for &(parent_idx, edge_idx, _new_v, new_kc, new_ei) in &candidates {
                 let (u, v) = all_edges[edge_idx];
                 let parent = &beam[parent_idx];
                 let mut graph = parent.graph.clone();
@@ -358,12 +371,22 @@ impl SearchStrategy for Tree2Search {
                 graph.set_edge(u, v, !cur);
                 comp.set_edge(u, v, cur);
 
-                // Full recount for beam entries to prevent drift
-                let kc = count_cliques(&graph, k);
-                let ei = count_cliques(&comp, ell);
+                let adj_nbrs = NeighborSet::from_adj(&graph);
+                let comp_nbrs = NeighborSet::from_adj(&comp);
+
+                let (kc, ei) = if do_full_recount {
+                    // Full recount to correct any accumulated drift
+                    (count_cliques(&graph, k), count_cliques(&comp, ell))
+                } else {
+                    // Trust incremental values — no expensive recount
+                    (new_kc, new_ei)
+                };
+
                 new_beam.push(BeamEntry {
                     graph,
                     comp,
+                    adj_nbrs,
+                    comp_nbrs,
                     violations: kc + ei,
                     kc,
                     ei,

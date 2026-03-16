@@ -113,8 +113,11 @@ case "$cmd" in
   experiment)
     bash "$REPO/scripts/experiment.sh" "$@"
     ;;
+  fleet)
+    bash "$REPO/scripts/fleet.sh" "$@"
+    ;;
   *)
-    echo "Usage: wsl-dev.sh {test|clippy|build|web|web-dev|ci|server|server-log|search|bench|seed|e2e|experiment}"
+    echo "Usage: wsl-dev.sh {test|clippy|build|web|web-dev|ci|server|server-log|search|bench|seed|e2e|experiment|fleet}"
     echo "  Add --release for optimized builds (server, search, build, test)"
     exit 1
     ;;

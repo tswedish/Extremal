@@ -3,6 +3,7 @@
 	import { getSubmission, type SubmissionDetail, type RgxfJson } from '$lib/api';
 	import MatrixView from '$lib/components/MatrixView.svelte';
 	import CircleLayout from '$lib/components/CircleLayout.svelte';
+	import GemView from '$lib/components/GemView.svelte';
 
 	let detail = $state<SubmissionDetail | null>(null);
 	let loading = $state(true);
@@ -218,6 +219,7 @@
 			<section class="viz-section">
 				<h2>Graph Visualization</h2>
 				<div class="viz-row">
+					<GemView rgxf={detail.rgxf} size={360} label="MineGraph Gem" />
 					<MatrixView rgxf={detail.rgxf} witness={detail.witness ?? []} size={360} />
 					<CircleLayout rgxf={detail.rgxf} witness={detail.witness ?? []} size={360} />
 				</div>

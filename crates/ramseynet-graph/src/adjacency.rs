@@ -126,6 +126,27 @@ impl AdjacencyMatrix {
         &self.bits
     }
 
+    /// Build neighbor bitmask array. `masks[v]` has bit `w` set iff edge(v,w).
+    ///
+    /// Supports n up to 64. For the primary R(5,5) n=25 use case, each
+    /// vertex's neighbors fit in a single u64. This enables bitwise-parallel
+    /// clique counting: common neighbors = `masks[u] & masks[v]`, clique
+    /// membership = AND + popcount.
+    pub fn neighbor_masks(&self) -> Vec<u64> {
+        assert!(self.n <= 64, "neighbor_masks requires n <= 64");
+        let n = self.n;
+        let mut masks = vec![0u64; n as usize];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if self.edge(i, j) {
+                    masks[i as usize] |= 1u64 << j;
+                    masks[j as usize] |= 1u64 << i;
+                }
+            }
+        }
+        masks
+    }
+
     /// Bit index within the packed upper-triangular representation.
     /// Requires i < j.
     fn bit_index(n: u32, i: u32, j: u32) -> usize {

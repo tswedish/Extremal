@@ -1,5 +1,9 @@
 <script lang="ts">
+	import { getLeaderboards, getLeaderboard, type LeaderboardSummary, type RgxfJson } from '$lib/api';
+	import GemView from '$lib/components/GemView.svelte';
+
 	let status = $state<string>('connecting...');
+	let topGem = $state<{ rgxf: RgxfJson; label: string } | null>(null);
 
 	async function checkHealth() {
 		try {
@@ -11,25 +15,49 @@
 		}
 	}
 
+	async function fetchTopGem() {
+		try {
+			const summaries: LeaderboardSummary[] = await getLeaderboards();
+			if (summaries.length === 0) return;
+			// Pick the most active leaderboard (highest entry count)
+			const best = summaries.reduce((a, b) => (a.entry_count > b.entry_count ? a : b));
+			const detail = await getLeaderboard(best.k, best.ell, best.n);
+			if (detail.top_graph) {
+				topGem = {
+					rgxf: detail.top_graph,
+					label: `#1 — R(${best.k},${best.ell}) n=${best.n}`
+				};
+			}
+		} catch {
+			// Silently ignore — gem is optional
+		}
+	}
+
 	$effect(() => {
 		checkHealth();
+		fetchTopGem();
 	});
 </script>
 
 <svelte:head>
-	<title>RamseyNet</title>
+	<title>MineGraph</title>
 </svelte:head>
 
 <div class="hero">
-	<h1>RamseyNet</h1>
+	<h1>MineGraph</h1>
 	<p class="subtitle">
-		A permissionless protocol for distributed Ramsey graph search
-		and deterministic generative graph art
+		Distributed Ramsey graph search and deterministic generative graph art
 	</p>
 	<div class="status-badge" class:online={status.includes('ok')}>
 		{status}
 	</div>
 </div>
+
+{#if topGem}
+	<div class="gem-showcase">
+		<GemView rgxf={topGem.rgxf} size={280} label={topGem.label} />
+	</div>
+{/if}
 
 <div class="grid">
 	<div class="card">
@@ -47,7 +75,7 @@
 <style>
 	.hero {
 		text-align: center;
-		padding: 3rem 0 2rem;
+		padding: 3rem 0 1.5rem;
 	}
 
 	h1 {
@@ -83,11 +111,17 @@
 		color: var(--color-accepted);
 	}
 
+	.gem-showcase {
+		display: flex;
+		justify-content: center;
+		padding: 1rem 0 1.5rem;
+	}
+
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 		gap: 1.25rem;
-		margin-top: 2rem;
+		margin-top: 1rem;
 	}
 
 	.card {
@@ -112,5 +146,4 @@
 		font-size: 0.875rem;
 		font-weight: 500;
 	}
-
 </style>

@@ -4,6 +4,7 @@
 	import MatrixView from '$lib/components/MatrixView.svelte';
 	import CircleLayout from '$lib/components/CircleLayout.svelte';
 	import GraphThumb from '$lib/components/GraphThumb.svelte';
+	import GemView from '$lib/components/GemView.svelte';
 
 	let detail = $state<LeaderboardDetail | null>(null);
 	let loading = $state(true);
@@ -312,6 +313,7 @@
 			<section class="viz-section">
 				<h2>Top Graph</h2>
 				<div class="viz-row">
+					<GemView rgxf={detail.top_graph} size={360} label="MineGraph Gem" />
 					<MatrixView rgxf={detail.top_graph} size={360} />
 					<CircleLayout rgxf={detail.top_graph} size={360} />
 				</div>
