@@ -42,6 +42,7 @@ MAX_ITERS=100000
 SWEEP=false
 BEAM_WIDTH=100
 MAX_DEPTH=10
+SAMPLE_BIAS=0.5
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -55,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --init) INIT_MODE="$2"; shift 2 ;;
     --base-port) BASE_PORT="$2"; shift 2 ;;
     --max-iters) MAX_ITERS="$2"; shift 2 ;;
+    --sample-bias) SAMPLE_BIAS="$2"; shift 2 ;;
     --sweep) SWEEP=true; shift ;;
     --beam-width) BEAM_WIDTH="$2"; shift 2 ;;
     --max-depth) MAX_DEPTH="$2"; shift 2 ;;
@@ -77,12 +79,14 @@ mkdir -p "$LOGDIR"
 #   focused:      small beam, medium depth, top-heavy sampling → exploit best seeds
 #   explorer:     medium beam, medium depth, uniform sampling → explore diverse seeds
 #
+# Profiles tuned from sweep experiments.
+# focused (bias=0.8) consistently dominates. ultra-wide is dead.
 PROFILES=(
-  "narrow-deep:50:20:0.5"
-  "standard:100:10:0.5"
-  "wide-shallow:200:5:0.5"
-  "ultra-wide:400:3:0.5"
   "focused:80:12:0.8"
+  "focused-deep:60:18:0.8"
+  "focused-wide:120:8:0.8"
+  "standard:100:10:0.5"
+  "narrow-deep:50:20:0.5"
   "explorer:120:8:0.2"
 )
 NUM_PROFILES=${#PROFILES[@]}
@@ -105,7 +109,7 @@ for i in $(seq 1 $NUM_WORKERS); do
     WORKER_LABELS[$i]="default"
     WORKER_BEAMS[$i]="$BEAM_WIDTH"
     WORKER_DEPTHS[$i]="$MAX_DEPTH"
-    WORKER_BIASES[$i]="0.5"
+    WORKER_BIASES[$i]="$SAMPLE_BIAS"
   fi
 done
 

@@ -18,24 +18,22 @@ Current state as of 2026-03-16.
 
 ## What to Do Next (RESUME HERE)
 
-### Immediate: Run bitwise fleet experiment
+### Immediate: Run focused fleet against prod
 
-The bitwise implementation just landed. Run a fleet to measure the actual
-speedup vs the pre-bitwise baseline:
+Two sweep experiments confirmed: `focused` profile (beam=80, depth=12,
+bias=0.8) consistently gets 2-3x more admissions per worker than any other
+config. The updated sweep profiles reflect this — ultra-wide was killed,
+three focused variants added.
 
 ```bash
-# Start server (if not running)
-./run server --release --leaderboard-capacity 2000
+# All 16 workers on the winning config
+./run fleet --workers 16 --base-port 9000 \
+  --server http://localhost:3001 \
+  --beam-width 80 --max-depth 12 --sample-bias 0.8
 
-# Run bitwise fleet
-./run fleet --sweep --base-port 9000
+# Or sweep the updated profiles (3 focused variants + 3 others)
+./run fleet --sweep --base-port 9000 --server http://localhost:3001
 ```
-
-Let it run 15-30 minutes, then compare:
-- **Round time** — expect ~30-80ms avg (vs ~330ms pre-bitwise)
-- **Total discoveries** — expect 5-10x more in same wall time
-- **Admission rate** — may drop if leaderboard is already well-populated
-- **Per-profile results** — which hyperparameter combo is best?
 
 ### Priority 2: Diversity-Aware Beam Selection
 
