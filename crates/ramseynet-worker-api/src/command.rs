@@ -57,7 +57,7 @@ pub struct EngineConfigPatch {
 pub enum WorkerEvent {
     /// Current worker status.
     #[serde(rename = "status")]
-    Status(WorkerStatus),
+    Status(Box<WorkerStatus>),
     /// Error message.
     #[serde(rename = "error")]
     Error { message: String },
@@ -88,6 +88,8 @@ pub struct WorkerStatus {
     pub round: u64,
     pub init_mode: Option<String>,
     pub server_url: Option<String>,
+    pub key_id: Option<String>,
+    pub metadata: Option<String>,
     pub metrics: WorkerMetrics,
 }
 

@@ -50,7 +50,7 @@ export interface LeaderboardEntry {
 	tier2_aut: number;
 	score_json: string;
 	key_id: string | null;
-	commit_hash: string | null;
+	metadata: string | null;
 	admitted_at: string;
 }
 
@@ -107,7 +107,7 @@ export interface SubmissionDetail {
 	score: Record<string, unknown> | null;
 	key_id: string | null;
 	sig_status: string;
-	commit_hash: string | null;
+	metadata: Record<string, unknown> | null;
 }
 
 export interface KeyLeaderboardEntry {

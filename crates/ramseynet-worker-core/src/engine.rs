@@ -251,7 +251,7 @@ pub async fn run_engine(
     default_server_url: String,
     signing_key_id: Option<String>,
     signing_key: Option<ed25519_dalek::SigningKey>,
-    commit_hash: Option<String>,
+    metadata: Option<String>,
 ) -> Result<(), WorkerError> {
     let mut rng = SmallRng::from_entropy();
     let mut pool_rng = SmallRng::from_entropy();
@@ -283,7 +283,9 @@ pub async fn run_engine(
                        active_strategy: &Option<String>,
                        metrics: &WorkerMetrics,
                        event_tx: &mpsc::Sender<WorkerEvent>,
-                       default_server_url: &str| {
+                       default_server_url: &str,
+                       key_id: &Option<String>,
+                       metadata_str: &Option<String>| {
         let server_url = config
             .as_ref()
             .map(|c| c.server_url.clone())
@@ -297,9 +299,11 @@ pub async fn run_engine(
             round,
             init_mode: config.as_ref().map(|c| format!("{:?}", c.init_mode)),
             server_url: Some(server_url),
+            key_id: key_id.clone(),
+            metadata: metadata_str.clone(),
             metrics: metrics.clone(),
         };
-        let _ = event_tx.try_send(WorkerEvent::Status(status));
+        let _ = event_tx.try_send(WorkerEvent::Status(Box::new(status)));
     };
 
     // Send initial strategies info
@@ -331,8 +335,8 @@ pub async fn run_engine(
             if let Some(ref sk) = signing_key {
                 c.set_signing_key(sk.clone());
             }
-            if let Some(ref ch) = commit_hash {
-                c.set_commit_hash(ch.clone());
+            if let Some(ref m) = metadata {
+                c.set_metadata(m.clone());
             }
             client = Some(c);
         }
@@ -350,6 +354,8 @@ pub async fn run_engine(
             &metrics,
             &event_tx,
             &default_server_url,
+            &signing_key_id,
+            &metadata,
         );
     } else {
         info!("starting in idle mode — waiting for commands");
@@ -361,6 +367,8 @@ pub async fn run_engine(
             &metrics,
             &event_tx,
             &default_server_url,
+            &signing_key_id,
+            &metadata,
         );
     }
 
@@ -387,8 +395,8 @@ pub async fn run_engine(
                                     if let Some(ref sk) = signing_key {
                                         c.set_signing_key(sk.clone());
                                     }
-                                    if let Some(ref ch) = commit_hash {
-                                        c.set_commit_hash(ch.clone());
+                                    if let Some(ref m) = metadata {
+                                        c.set_metadata(m.clone());
                                     }
                                     client = Some(c);
                                 } else {
@@ -413,12 +421,12 @@ pub async fn run_engine(
                                 state = WorkerState::Searching;
                                 metrics.known_cids_count = server_cids.len();
                                 metrics.local_pool_size = local_pool.len();
-                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url, &signing_key_id, &metadata);
                             }
                             WorkerCommand::Status => {
                                 metrics.known_cids_count = server_cids.len();
                                 metrics.local_pool_size = local_pool.len();
-                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url, &signing_key_id, &metadata);
                             }
                             WorkerCommand::ClearKnownCids => {
                                 info!(prev = server_cids.len(), "clearing server CID cache");
@@ -452,17 +460,17 @@ pub async fn run_engine(
                             WorkerCommand::Resume => {
                                 info!("resuming search");
                                 state = WorkerState::Searching;
-                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url, &signing_key_id, &metadata);
                             }
                             WorkerCommand::Stop => {
                                 info!("stopping search (from paused)");
                                 state = WorkerState::Idle;
-                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url, &signing_key_id, &metadata);
                             }
                             WorkerCommand::Status => {
                                 metrics.known_cids_count = server_cids.len();
                                 metrics.local_pool_size = local_pool.len();
-                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                                send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url, &signing_key_id, &metadata);
                             }
                             WorkerCommand::ClearKnownCids => {
                                 info!(prev = server_cids.len(), "clearing server CID cache");
@@ -511,6 +519,8 @@ pub async fn run_engine(
                                 &metrics,
                                 &event_tx,
                                 &default_server_url,
+                                &signing_key_id,
+                                &metadata,
                             );
                         }
                         WorkerCommand::Stop => {
@@ -524,6 +534,8 @@ pub async fn run_engine(
                                 &metrics,
                                 &event_tx,
                                 &default_server_url,
+                                &signing_key_id,
+                                &metadata,
                             );
                         }
                         WorkerCommand::Status => {
@@ -537,6 +549,8 @@ pub async fn run_engine(
                                 &metrics,
                                 &event_tx,
                                 &default_server_url,
+                                &signing_key_id,
+                                &metadata,
                             );
                         }
                         WorkerCommand::ClearKnownCids => {
@@ -656,6 +670,8 @@ pub async fn run_engine(
                             &metrics,
                             &event_tx,
                             &default_server_url,
+                            &signing_key_id,
+                            &metadata,
                         );
                         continue;
                     }
@@ -740,7 +756,7 @@ pub async fn run_engine(
                                         message: format!("strategy panicked: {e}"),
                                     });
                                     state = WorkerState::Idle;
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url, &signing_key_id, &metadata);
                                     break None;
                                 }
                             }
@@ -759,7 +775,7 @@ pub async fn run_engine(
                                     }
                                 }
                                 WorkerCommand::Status => {
-                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url);
+                                    send_status(&state, &config, round, &active_strategy_id, &metrics, &event_tx, &default_server_url, &signing_key_id, &metadata);
                                 }
                                 _ => {}
                             }
@@ -835,6 +851,8 @@ pub async fn run_engine(
                         &metrics,
                         &event_tx,
                         &default_server_url,
+                        &signing_key_id,
+                        &metadata,
                     );
                     if *shutdown.borrow() {
                         return Ok(());
@@ -955,6 +973,8 @@ pub async fn run_engine(
                     &metrics,
                     &event_tx,
                     &default_server_url,
+                    &signing_key_id,
+                    &metadata,
                 );
             }
         }

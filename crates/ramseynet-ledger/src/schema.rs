@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS graph_submissions (
     signature    TEXT,
     sig_status   TEXT NOT NULL DEFAULT 'anonymous',
     commit_hash  TEXT,
+    metadata     TEXT,
     submitted_at TEXT NOT NULL,
     CHECK (k >= 2 AND ell >= 2 AND k <= ell AND n >= 1)
 );
@@ -56,6 +57,7 @@ CREATE TABLE IF NOT EXISTS leaderboard (
     score_json   TEXT NOT NULL,
     key_id       TEXT,
     commit_hash  TEXT,
+    metadata     TEXT,
     admitted_at  TEXT NOT NULL,
     PRIMARY KEY (k, ell, n, graph_cid),
     CHECK (k <= ell AND rank >= 1)
@@ -73,6 +75,8 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE leaderboard ADD COLUMN key_id TEXT;",
     "ALTER TABLE leaderboard ADD COLUMN commit_hash TEXT;",
     "CREATE TABLE IF NOT EXISTS identities (key_id TEXT PRIMARY KEY, public_key TEXT NOT NULL UNIQUE, display_name TEXT, github_repo TEXT, created_at TEXT NOT NULL);",
+    "ALTER TABLE graph_submissions ADD COLUMN metadata TEXT;",
+    "ALTER TABLE leaderboard ADD COLUMN metadata TEXT;",
 ];
 
 /// Initialize the database schema. Enables WAL mode for better concurrent reads.

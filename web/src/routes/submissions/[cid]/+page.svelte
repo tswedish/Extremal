@@ -9,6 +9,7 @@
 	let loading = $state(true);
 	let error = $state('');
 	let showRgxf = $state(false);
+	let showMetadata = $state(false);
 	let includeMetadata = $state(false);
 	let copied = $state(false);
 
@@ -131,24 +132,17 @@
 				</div>
 			{/if}
 			<div class="meta-row">
-				<span class="meta-label">Submitter</span>
+				<span class="meta-label">Signature</span>
 				<span class="meta-value mono">
-					{#if detail.key_id}
+					{#if detail.sig_status === 'verified'}
 						<a href="/keys/{detail.key_id}" class="key-link" title={detail.key_id}>
-							{detail.key_id.slice(0, 8)}...
+							{detail.key_id?.slice(0, 8)}...
 						</a>
-						{#if detail.sig_status === 'verified'}
-							<span class="sig-badge sig-verified" title="Signature verified">verified</span>
-						{:else if detail.sig_status === 'unregistered'}
-							<span class="sig-badge sig-unregistered" title="Key not registered on server">unregistered</span>
-						{:else if detail.sig_status === 'invalid'}
-							<span class="sig-badge sig-invalid" title="Invalid signature">invalid</span>
-						{/if}
-						{#if detail.commit_hash}
-							<span style="color: var(--color-text-muted); font-size: 0.75rem"> @ {detail.commit_hash.slice(0, 7)}</span>
-						{/if}
+						<span class="sig-badge sig-verified">signed</span>
+					{:else if detail.sig_status === 'invalid'}
+						<span class="sig-badge sig-invalid">signing failed</span>
 					{:else}
-						<span style="color: var(--color-text-muted); font-style: italic">anonymous</span>
+						<span class="sig-badge sig-unsigned">unsigned</span>
 					{/if}
 				</span>
 			</div>
@@ -163,6 +157,18 @@
 				</div>
 			{/if}
 		</div>
+
+		{#if detail.metadata}
+			<section class="metadata-section">
+				<button class="metadata-toggle" onclick={() => showMetadata = !showMetadata}>
+					<span class="caret" class:open={showMetadata}></span>
+					Metadata
+				</button>
+				{#if showMetadata}
+					<pre class="metadata-code">{JSON.stringify(detail.metadata, null, 2)}</pre>
+				{/if}
+			</section>
+		{/if}
 
 		{#if detail.score}
 			{@const score = detail.score as Record<string, unknown>}
@@ -352,7 +358,7 @@
 		background: color-mix(in srgb, var(--color-accepted) 15%, transparent);
 	}
 
-	.sig-unregistered {
+	.sig-unsigned {
 		color: #f59e0b;
 		background: color-mix(in srgb, #f59e0b 15%, transparent);
 	}
@@ -360,6 +366,57 @@
 	.sig-invalid {
 		color: var(--color-rejected);
 		background: color-mix(in srgb, var(--color-rejected) 15%, transparent);
+	}
+
+	/* ── Metadata section ───────────────────────────────────── */
+
+	.metadata-section {
+		margin-top: 1rem;
+	}
+
+	.metadata-toggle {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+	}
+
+	.metadata-toggle:hover {
+		color: var(--color-accent);
+	}
+
+	.caret {
+		display: inline-block;
+		width: 0;
+		height: 0;
+		border-left: 4px solid currentColor;
+		border-top: 3px solid transparent;
+		border-bottom: 3px solid transparent;
+		transition: transform 0.15s;
+	}
+
+	.caret.open {
+		transform: rotate(90deg);
+	}
+
+	.metadata-code {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-text);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: 0.5rem;
+		padding: 0.75rem 1rem;
+		margin-top: 0.5rem;
+		overflow-x: auto;
+		white-space: pre;
+		line-height: 1.5;
 	}
 
 	.meta-link {

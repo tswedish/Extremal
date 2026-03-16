@@ -168,9 +168,13 @@ struct Cli {
     #[arg(long)]
     signing_key: Option<String>,
 
-    /// Git commit hash to include in submissions (for provenance tracking).
+    /// Git commit hash to include in submission metadata (for provenance tracking).
     #[arg(long)]
     commit_hash: Option<String>,
+
+    /// Worker ID for distinguishing parallel workers (included in submission metadata).
+    #[arg(long)]
+    worker_id: Option<u32>,
 }
 
 #[tokio::main]
@@ -316,6 +320,26 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Build metadata JSON from commit_hash and worker_id
+    let metadata = {
+        let mut meta = serde_json::Map::new();
+        if let Some(ref ch) = cli.commit_hash {
+            meta.insert("commit_hash".to_string(), serde_json::Value::String(ch.clone()));
+        }
+        if let Some(wid) = cli.worker_id {
+            meta.insert("worker_id".to_string(), serde_json::Value::Number(wid.into()));
+        }
+        if meta.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(meta).to_string())
+        }
+    };
+
+    if let Some(ref m) = metadata {
+        info!(metadata = %m, "submission metadata configured");
+    }
+
     run_engine(
         initial_config,
         strategies,
@@ -326,7 +350,7 @@ async fn main() -> Result<()> {
         cli.server.clone(),
         signing_key_id,
         signing_key,
-        cli.commit_hash.clone(),
+        metadata,
     )
     .await?;
 

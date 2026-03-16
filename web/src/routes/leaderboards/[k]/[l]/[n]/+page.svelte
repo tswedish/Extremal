@@ -355,11 +355,17 @@
 									<a href="/keys/{entry.key_id}" title={entry.key_id}>
 										{entry.key_id.slice(0, 8)}...
 									</a>
-									{#if entry.commit_hash}
-										<span class="commit" title="commit: {entry.commit_hash}">{entry.commit_hash.slice(0, 7)}</span>
-									{/if}
 								{:else}
 									<span class="anon">anon</span>
+								{/if}
+								{#if entry.metadata}
+									{@const meta = (() => { try { return JSON.parse(entry.metadata); } catch { return null; } })()}
+									{#if meta && (meta.worker_id != null || meta.commit_hash)}
+										<span class="commit" title={entry.metadata}>
+											{#if meta.worker_id != null}w{meta.worker_id}{/if}
+											{#if meta.commit_hash}{meta.worker_id != null ? ' ' : ''}{meta.commit_hash.slice(0, 7)}{/if}
+										</span>
+									{/if}
 								{/if}
 							</td>
 								<td class="score">{entry.tier1_max}</td>

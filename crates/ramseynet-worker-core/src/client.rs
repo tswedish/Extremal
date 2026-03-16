@@ -54,7 +54,7 @@ struct SubmitRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     signature: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    commit_hash: Option<String>,
+    metadata: Option<String>,
 }
 
 /// Async HTTP client for the RamseyNet server.
@@ -66,8 +66,8 @@ pub struct ServerClient {
     key_id: Option<String>,
     /// Optional Ed25519 signing key for payload signatures.
     signing_key: Option<Arc<SigningKey>>,
-    /// Optional commit hash for provenance tracking.
-    commit_hash: Option<String>,
+    /// Optional JSON metadata for submissions (commit_hash, worker_id, etc.).
+    metadata: Option<String>,
 }
 
 impl ServerClient {
@@ -82,7 +82,7 @@ impl ServerClient {
             client,
             key_id: None,
             signing_key: None,
-            commit_hash: None,
+            metadata: None,
         }
     }
 
@@ -96,9 +96,9 @@ impl ServerClient {
         self.signing_key = Some(Arc::new(key));
     }
 
-    /// Set the commit hash for all future submissions.
-    pub fn set_commit_hash(&mut self, hash: String) {
-        self.commit_hash = Some(hash);
+    /// Set the JSON metadata for all future submissions.
+    pub fn set_metadata(&mut self, metadata: String) {
+        self.metadata = Some(metadata);
     }
 
     /// Fetch the admission threshold for a (k, ell, n) leaderboard.
@@ -213,7 +213,7 @@ impl ServerClient {
             graph,
             key_id: self.key_id.clone(),
             signature,
-            commit_hash: self.commit_hash.clone(),
+            metadata: self.metadata.clone(),
         };
 
         let resp = self.client.post(&url).json(&body).send().await?;

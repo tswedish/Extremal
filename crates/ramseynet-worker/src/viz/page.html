@@ -641,6 +641,10 @@ header h1 {
   <span class="metric-sep"></span>
   <span class="metric">Server: <span class="metric-val" id="m-server">--</span> <span class="metric-val" id="m-server-url" style="font-weight:400;color:#666680;font-size:10px"></span></span>
   <span class="metric">Leaderboard: <span class="metric-val" id="m-lb-total">--</span></span>
+  <span class="metric-sep"></span>
+  <span class="metric">Key: <span class="metric-val" id="m-key-id">--</span></span>
+  <span class="metric">Worker: <span class="metric-val" id="m-worker-id">--</span></span>
+  <span class="metric">Commit: <span class="metric-val" id="m-commit">--</span></span>
 </div>
 <div class="stats-bar" id="stats-bar">
   <div class="stat"><span class="stat-label">Strategy</span><span class="stat-value" id="s-strategy">--</span></div>
@@ -1361,6 +1365,23 @@ function handleStatus(msg) {
     $('m-server').className = 'metric-val' + (m.server_connected ? '' : ' warn');
     $('m-server-url').textContent = msg.server_url ? '(' + msg.server_url + ')' : '';
     $('m-lb-total').textContent = m.leaderboard_total || 0;
+  }
+
+  // Update identity info
+  $('m-key-id').textContent = msg.key_id ? msg.key_id.slice(0, 8) + '...' : 'anon';
+  $('m-key-id').className = 'metric-val' + (msg.key_id ? '' : ' warn');
+  if (msg.metadata) {
+    try {
+      var meta = JSON.parse(msg.metadata);
+      $('m-worker-id').textContent = meta.worker_id != null ? meta.worker_id : '--';
+      $('m-commit').textContent = meta.commit_hash ? meta.commit_hash.slice(0, 7) : '--';
+    } catch(e) {
+      $('m-worker-id').textContent = '--';
+      $('m-commit').textContent = '--';
+    }
+  } else {
+    $('m-worker-id').textContent = '--';
+    $('m-commit').textContent = '--';
   }
 
   // Auto-collapse controls when searching, expand when idle

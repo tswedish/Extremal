@@ -333,9 +333,10 @@ struct SubmitRequest {
     /// Optional Ed25519 signature over the canonical submission payload.
     #[serde(default)]
     signature: Option<String>,
-    /// Optional git commit hash of the worker code.
+    /// Optional JSON metadata from the submitter (max 4KB).
+    /// Can contain commit_hash, worker_id, or any other provenance info.
     #[serde(default)]
-    commit_hash: Option<String>,
+    metadata: Option<String>,
 }
 
 /// Full lifecycle: verify + canonicalize + store + leaderboard admission.
@@ -438,13 +439,16 @@ async fn submit_graph(
     let id_key_id = req.key_id.clone();
     let id_signature = req.signature.clone();
     let id_sig_status = sig_status.to_string();
-    let id_commit_hash = req.commit_hash.clone();
+    // Validate and truncate metadata to 4KB max; must be valid JSON
+    let id_metadata = req.metadata.as_ref().and_then(|m| {
+        if m.len() > 4096 { None } else { serde_json::from_str::<serde_json::Value>(m).ok().map(|_| m.clone()) }
+    });
     let (is_duplicate, lb_entry) = tokio::task::spawn_blocking(move || {
         let identity = SubmitIdentity {
             key_id: id_key_id.as_deref(),
             signature: id_signature.as_deref(),
             sig_status: &id_sig_status,
-            commit_hash: id_commit_hash.as_deref(),
+            metadata: id_metadata.as_deref(),
         };
         ledger.submit_and_admit(
             k,
@@ -515,7 +519,7 @@ async fn submit_graph(
             "score": score_json,
             "key_id": req.key_id,
             "sig_status": sig_status,
-            "commit_hash": req.commit_hash,
+            "metadata": req.metadata,
         })),
     ))
 }
@@ -543,15 +547,18 @@ async fn get_submission(
 
     let rgxf: Option<Value> = serde_json::from_str(&submission.rgxf_json).ok();
 
-    // Prefer leaderboard entry's key_id/commit_hash, fall back to submission's
+    // Prefer leaderboard entry's key_id/commit_hash/metadata, fall back to submission's
     let key_id = lb_entry
         .as_ref()
         .and_then(|e| e.key_id.as_ref())
         .or(submission.key_id.as_ref());
-    let commit_hash = lb_entry
+    let metadata = lb_entry
         .as_ref()
-        .and_then(|e| e.commit_hash.as_ref())
-        .or(submission.commit_hash.as_ref());
+        .and_then(|e| e.metadata.as_ref())
+        .or(submission.metadata.as_ref());
+    // Parse metadata as JSON for structured response
+    let metadata_json: Option<Value> = metadata
+        .and_then(|m| serde_json::from_str(m).ok());
 
     Ok(Json(json!({
         "graph_cid": submission.graph_cid,
@@ -568,7 +575,7 @@ async fn get_submission(
         "score": lb_entry.as_ref().and_then(|e| serde_json::from_str::<Value>(&e.score_json).ok()),
         "key_id": key_id,
         "sig_status": submission.sig_status,
-        "commit_hash": commit_hash,
+        "metadata": metadata_json,
     })))
 }
 

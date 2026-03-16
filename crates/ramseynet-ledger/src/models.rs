@@ -14,8 +14,8 @@ pub struct Submission {
     pub key_id: Option<String>,
     /// Signature verification status: "anonymous", "verified", "invalid", "unregistered".
     pub sig_status: String,
-    /// Git commit hash of the worker code (if provided).
-    pub commit_hash: Option<String>,
+    /// Arbitrary JSON metadata from the submitter (commit hash, worker ID, etc.).
+    pub metadata: Option<String>,
 }
 
 /// A verification receipt for a submitted graph.
@@ -45,7 +45,7 @@ pub struct LeaderboardEntry {
     pub tier2_aut: f64,
     pub score_json: String,
     pub key_id: Option<String>,
-    pub commit_hash: Option<String>,
+    pub metadata: Option<String>,
     pub admitted_at: DateTime<Utc>,
 }
 
