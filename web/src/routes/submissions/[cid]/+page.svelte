@@ -247,7 +247,12 @@
 			<section class="viz-section">
 				<h2>Graph Visualization</h2>
 				<div class="viz-row">
-					<GemView rgxf={detail.rgxf} size={360} label="MineGraph Gem" />
+					<GemView rgxf={detail.rgxf} size={360}
+						graphCid={detail.graph_cid}
+						goodmanGap={Number(detail.score?.goodman_gap ?? 0)}
+						cMax={Math.max(Number(detail.score?.c_omega ?? 0), Number(detail.score?.c_alpha ?? 0))}
+						cMin={Math.min(Number(detail.score?.c_omega ?? 0), Number(detail.score?.c_alpha ?? 0))}
+						autOrder={Number(detail.score?.aut_order ?? 1)} />
 					<MatrixView rgxf={detail.rgxf} witness={detail.witness ?? []} size={360} />
 					<CircleLayout rgxf={detail.rgxf} witness={detail.witness ?? []} size={360} />
 				</div>

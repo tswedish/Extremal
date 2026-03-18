@@ -30,7 +30,7 @@ use ramseynet_worker_api::{
 };
 use tracing::debug;
 
-use crate::incremental::{fast_fingerprint, violation_delta_bitwise, NeighborSet};
+use crate::incremental::{fast_fingerprint, guilty_edges, violation_delta_bitwise, NeighborSet};
 
 /// A beam entry: graph + complement + neighbor bitmasks + violation counts.
 struct BeamEntry {
@@ -103,6 +103,13 @@ impl SearchStrategy for Tree2Search {
                 param_type: ParamType::Int { min: 1, max: 100 },
                 default: serde_json::json!(10),
             },
+            ConfigParam {
+                name: "focused".into(),
+                label: "Focused Edges".into(),
+                description: "Only flip edges participating in violations (Exoo-Tatarevic)".into(),
+                param_type: ParamType::Bool,
+                default: serde_json::json!(true),
+            },
         ]
     }
 
@@ -117,6 +124,11 @@ impl SearchStrategy for Tree2Search {
             .get("max_depth")
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as u32;
+        let focused = job
+            .config
+            .get("focused")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let n = job.n;
         let k = job.k;
@@ -135,7 +147,6 @@ impl SearchStrategy for Tree2Search {
             }
             v
         };
-        let num_edges = all_edges.len();
 
         // Seed graph
         let seed = job.init_graph.clone().unwrap_or_else(|| {
@@ -210,40 +221,66 @@ impl SearchStrategy for Tree2Search {
 
             let depth_start = Instant::now();
             let remaining = max_iters.saturating_sub(iters_used);
-            let full_budget = num_edges as u64 * beam.len() as u64;
 
-            let edges_per_parent = if full_budget > remaining {
-                let per = remaining / beam.len().max(1) as u64;
-                (per as usize).max(1).min(num_edges)
-            } else {
-                num_edges
-            };
-
-            // Collect candidate scores: (parent_idx, edge_idx, new_violations, new_kc, new_ei)
-            let mut candidates: Vec<(usize, usize, u64, u64, u64)> = Vec::new();
+            // Collect candidate scores: (parent_idx, u, v, new_violations, new_kc, new_ei)
+            let mut candidates: Vec<(usize, u32, u32, u64, u64, u64)> = Vec::new();
             let mut dedup_hits: u64 = 0;
             let mut scored_count: u64 = 0;
+            let beam_len = beam.len();
+
+            // Focused mode: compute guilty edges ONCE per depth from the best
+            // beam entry (lowest violations). All parents at this depth share
+            // the same focused edge set. This amortizes the clique enumeration
+            // cost (1 call per depth vs 80 calls per depth).
+            let depth_edges: Vec<(u32, u32)> = if focused {
+                let best = beam.iter().min_by_key(|e| e.violations).unwrap();
+                if best.violations > 0 {
+                    let ge = guilty_edges(&best.adj_nbrs, &best.comp_nbrs, k, ell, n);
+                    if ge.is_empty() {
+                        all_edges.clone()
+                    } else {
+                        ge
+                    }
+                } else {
+                    all_edges.clone()
+                }
+            } else {
+                all_edges.clone()
+            };
+            let depth_edge_count = depth_edges.len();
 
             for (parent_idx, parent) in beam.iter_mut().enumerate() {
                 if iters_used >= max_iters || observer.is_cancelled() {
                     break;
                 }
 
-                // Select edges to try
-                let edge_indices: Vec<usize> = if edges_per_parent < num_edges {
-                    let mut indices: Vec<usize> = (0..num_edges).collect();
-                    let (selected, _) = indices.partial_shuffle(&mut rng, edges_per_parent);
-                    selected.to_vec()
-                } else {
-                    (0..num_edges).collect()
+                let parent_edge_count = depth_edge_count;
+
+                // Budget: limit edges per parent if iteration budget is tight
+                let edges_to_try = {
+                    let per_parent_remaining = remaining.saturating_sub(scored_count)
+                        / (beam_len - parent_idx).max(1) as u64;
+                    if (parent_edge_count as u64) > per_parent_remaining && per_parent_remaining > 0
+                    {
+                        per_parent_remaining as usize
+                    } else {
+                        parent_edge_count
+                    }
                 };
 
-                for &edge_idx in &edge_indices {
+                // Select edges to try (sample if budget is tight)
+                let edges_iter: Vec<(u32, u32)> = if edges_to_try < parent_edge_count {
+                    let mut indices: Vec<usize> = (0..parent_edge_count).collect();
+                    let (selected, _) = indices.partial_shuffle(&mut rng, edges_to_try);
+                    selected.iter().map(|&i| depth_edges[i]).collect()
+                } else {
+                    depth_edges.clone()
+                };
+
+                for &(u, v) in &edges_iter {
                     if iters_used >= max_iters || observer.is_cancelled() {
                         break;
                     }
-
-                    let (u, v) = all_edges[edge_idx];
 
                     // Flip in-place
                     parent.flip(u, v);
@@ -270,7 +307,7 @@ impl SearchStrategy for Tree2Search {
                     iters_used += 1;
                     scored_count += 1;
 
-                    candidates.push((parent_idx, edge_idx, new_violations, new_kc, new_ei));
+                    candidates.push((parent_idx, u, v, new_violations, new_kc, new_ei));
 
                     // Check for valid graph
                     if new_violations == 0 {
@@ -353,7 +390,7 @@ impl SearchStrategy for Tree2Search {
             }
 
             // Select top beam_width candidates by violation score
-            candidates.sort_by_key(|&(_, _, v, _, _)| v);
+            candidates.sort_by_key(|&(_, _, _, v, _, _)| v);
             candidates.truncate(beam_width);
 
             // Materialize the new beam: clone parent + apply flip + rebuild masks.
@@ -362,14 +399,13 @@ impl SearchStrategy for Tree2Search {
             // correction.
             let do_full_recount = depth.is_multiple_of(5);
             let mut new_beam: Vec<BeamEntry> = Vec::with_capacity(candidates.len());
-            for &(parent_idx, edge_idx, _new_v, new_kc, new_ei) in &candidates {
-                let (u, v) = all_edges[edge_idx];
+            for &(parent_idx, cu, cv, _new_v, new_kc, new_ei) in &candidates {
                 let parent = &beam[parent_idx];
                 let mut graph = parent.graph.clone();
                 let mut comp = parent.comp.clone();
-                let cur = graph.edge(u, v);
-                graph.set_edge(u, v, !cur);
-                comp.set_edge(u, v, cur);
+                let cur = graph.edge(cu, cv);
+                graph.set_edge(cu, cv, !cur);
+                comp.set_edge(cu, cv, cur);
 
                 let adj_nbrs = NeighborSet::from_adj(&graph);
                 let comp_nbrs = NeighborSet::from_adj(&comp);
@@ -406,6 +442,8 @@ impl SearchStrategy for Tree2Search {
                 worst_score,
                 discoveries = discovery_count,
                 seen_set = seen.len(),
+                focused,
+                edges_per_parent = depth_edge_count,
                 elapsed_ms = depth_elapsed.as_millis() as u64,
                 "tree2: depth complete"
             );
@@ -601,5 +639,41 @@ mod tests {
         job.config = serde_json::json!({"beam_width": 50, "max_depth": 15});
         let result = Tree2Search.search(&job, &NoOpObserver);
         assert!(result.valid, "should find valid R(4,4) on 17 vertices");
+    }
+
+    #[test]
+    fn tree2_focused_finds_valid_r33_n5() {
+        let mut job = make_job(3, 3, 5, 50_000);
+        job.init_graph = Some(paley_graph(5));
+        job.config = serde_json::json!({"focused": true});
+        let result = Tree2Search.search(&job, &NoOpObserver);
+        assert!(
+            result.valid,
+            "focused tree2 should find valid R(3,3) on 5 vertices"
+        );
+    }
+
+    #[test]
+    fn tree2_focused_finds_valid_r44_n17() {
+        let mut job = make_job(4, 4, 17, 500_000);
+        job.init_graph = Some(paley_graph(17));
+        job.config = serde_json::json!({"beam_width": 50, "max_depth": 15, "focused": true});
+        let result = Tree2Search.search(&job, &NoOpObserver);
+        assert!(
+            result.valid,
+            "focused tree2 should find valid R(4,4) on 17 vertices"
+        );
+    }
+
+    #[test]
+    fn tree2_unfocused_finds_valid_r33_n5() {
+        let mut job = make_job(3, 3, 5, 50_000);
+        job.init_graph = Some(paley_graph(5));
+        job.config = serde_json::json!({"focused": false});
+        let result = Tree2Search.search(&job, &NoOpObserver);
+        assert!(
+            result.valid,
+            "unfocused tree2 should still find valid R(3,3) on 5 vertices"
+        );
     }
 }

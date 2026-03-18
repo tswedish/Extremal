@@ -720,119 +720,174 @@ function decodeRgxf(rgxf) {
   return matrix;
 }
 
-// Canvas matrix renderer (ported from MatrixView.svelte)
-function drawMatrix(canvas, rgxf, size) {
-  const n = rgxf.n;
-  const matrix = decodeRgxf(rgxf);
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = size * dpr;
-  canvas.height = size * dpr;
-  canvas.style.width = size + 'px';
-  canvas.style.height = size + 'px';
-  ctx.scale(dpr, dpr);
+// ── Gem-style rendering (matches web GemView.svelte) ──
 
-  ctx.fillStyle = '#141420';
-  ctx.fillRect(0, 0, size, size);
-  if (n === 0) return;
-
-  // Rotated 45°: cell (i,j) → (j-i+(n-1), i+j) in a (2n-1)×(2n-1) grid
-  const gridW = 2 * n - 1;
-  const cellSize = size / gridW;
-
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      const rx = j - i + (n - 1);
-      const ry = i + j;
-      const px = rx * cellSize;
-      const py = ry * cellSize;
-      if (i === j) {
-        ctx.fillStyle = '#1a1a2e';
-      } else if (matrix[i][j]) {
-        ctx.fillStyle = '#6366f1';
-      } else {
-        ctx.fillStyle = '#0a0a0f';
-      }
-      ctx.fillRect(px, py, cellSize + 0.5, cellSize + 0.5);
-    }
-  }
-
-  // Grid lines along diamond axes
-  ctx.strokeStyle = '#2a2a3a';
-  ctx.lineWidth = 0.5;
-  // Horizontal lines (constant i+j)
-  for (let s = 0; s < 2 * n; s++) {
-    const iMin = Math.max(0, s - n + 1);
-    const iMax = Math.min(s, n - 1);
-    if (iMin > iMax) continue;
-    const x0 = (s - iMax - iMax + (n - 1)) * cellSize;  // rx for j=s-iMax, i=iMax
-    const x1 = (s - iMin - iMin + (n - 1)) * cellSize + cellSize;
-    const y = s * cellSize;
-    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
-  }
-  // Vertical lines (constant j-i)
-  for (let d = -(n - 1); d <= n; d++) {
-    const iMin = Math.max(0, -d);
-    const iMax = Math.min(n - 1, n - 1 - d);
-    if (iMin > iMax) continue;
-    const sMin = iMin + (iMin + d);
-    const sMax = iMax + (iMax + d);
-    const x = (d + (n - 1)) * cellSize;
-    ctx.beginPath(); ctx.moveTo(x, sMin * cellSize); ctx.lineTo(x, sMax * cellSize + cellSize); ctx.stroke();
-  }
+// HSL → RGB string
+function hslToRgb(h, s, l) {
+  h = ((h % 1) + 1) % 1;
+  s = Math.max(0, Math.min(1, s));
+  l = Math.max(0, Math.min(1, l));
+  var c = (1 - Math.abs(2 * l - 1)) * s;
+  var x = c * (1 - Math.abs(((h * 6) % 2) - 1));
+  var m = l - c / 2;
+  var r = 0, g = 0, b = 0;
+  if (h < 1/6)      { r = c; g = x; }
+  else if (h < 2/6) { r = x; g = c; }
+  else if (h < 3/6) { g = c; b = x; }
+  else if (h < 4/6) { g = x; b = c; }
+  else if (h < 5/6) { r = x; b = c; }
+  else              { r = c; b = x; }
+  return 'rgb(' + Math.round((r+m)*255) + ',' + Math.round((g+m)*255) + ',' + Math.round((b+m)*255) + ')';
 }
 
-// Draw small thumbnail for pinned graphs — rotated diamond with blur
-function drawThumb(canvas, rgxf, size) {
-  const n = rgxf.n;
-  const matrix = decodeRgxf(rgxf);
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = size * dpr;
-  canvas.height = size * dpr;
+// Derive hue from CID hex (first 6 chars → high precision)
+function cidToHue(cid) {
+  var hex = (cid || '').replace(/^sha256-/, '');
+  if (hex.length < 6) return 0.55;
+  return (parseInt(hex.substring(0, 6), 16) % 100000) / 100000;
+}
+
+// Derive wave angle from CID hex (chars 6-12)
+function cidToAngle(cid) {
+  var hex = (cid || '').replace(/^sha256-/, '');
+  if (hex.length < 12) return 0.7;
+  return ((parseInt(hex.substring(6, 12), 16) % 100000) / 100000) * Math.PI;
+}
+
+// Fallback hue from graph bits (when no CID)
+function bitsToHue(rgxf) {
+  var raw = atob(rgxf.bits_b64);
+  var h = 5381;
+  for (var i = 0; i < raw.length; i++) h = ((h << 5) + h + raw.charCodeAt(i)) >>> 0;
+  return (h % 100000) / 100000;
+}
+
+// Deterministic per-cell hash for hue noise (returns -0.5..+0.5)
+function cellHash(i, j) {
+  return (((i * 2654435761) ^ (j * 2246822519)) >>> 0) / 4294967296 - 0.5;
+}
+
+// Build evenly-spaced hue palette
+function buildPalette(baseHue, count) {
+  if (count <= 1) return [baseHue];
+  var hues = [];
+  for (var i = 0; i < count; i++) hues.push((baseHue + i / count) % 1);
+  return hues;
+}
+
+// Color count from automorphism group order
+function autToColorCount(aut) {
+  if (aut <= 1) return 1;
+  if (aut <= 2) return 2;
+  if (aut <= 5) return 3;
+  if (aut <= 15) return 4;
+  if (aut <= 50) return 5;
+  return 6;
+}
+
+// Core gem renderer — draws rotated diamond with score-based coloring
+// score: { cid, goodman_gap, aut_order, c_omega, c_alpha } or null
+function drawGem(canvas, rgxf, size, score) {
+  var n = rgxf.n;
+  var matrix = decodeRgxf(rgxf);
+  var dpr = window.devicePixelRatio || 1;
+  var W = Math.round(size * dpr);
+  canvas.width = W;
+  canvas.height = W;
   canvas.style.width = size + 'px';
   canvas.style.height = size + 'px';
+  var ctx = canvas.getContext('2d');
 
-  const gridW = 2 * n - 1;
-  const cellSize = size / gridW;
+  if (n === 0) { ctx.fillStyle = '#0a0a12'; ctx.fillRect(0, 0, W, W); return; }
 
-  // Render sharp diamond to offscreen canvas
-  const off = document.createElement('canvas');
-  off.width = canvas.width;
-  off.height = canvas.height;
-  const octx = off.getContext('2d');
-  octx.scale(dpr, dpr);
-  octx.fillStyle = '#141420';
-  octx.fillRect(0, 0, size, size);
-  if (n === 0) return;
+  // Extract score params (with fallbacks)
+  var cid = score ? score.cid : null;
+  var goodmanGap = score ? (score.goodman_gap || 0) : 0;
+  var autOrder = score ? (score.aut_order || 1) : 1;
+  var cOmega = score ? (score.c_omega || 0) : 0;
+  var cAlpha = score ? (score.c_alpha || 0) : 0;
+  var cMax = Math.max(cOmega, cAlpha);
+  var cMin = Math.min(cOmega, cAlpha);
 
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      const rx = j - i + (n - 1);
-      const ry = i + j;
-      const px = rx * cellSize;
-      const py = ry * cellSize;
-      const cs = cellSize + 0.5;
+  var baseHue = cid ? cidToHue(cid) : bitsToHue(rgxf);
+  var waveAngle = cid ? cidToAngle(cid) : 0.7;
+  var hues = buildPalette(baseHue, autToColorCount(autOrder));
+
+  // Sine wave lightness modulation from |cMax - cMin|
+  var diff = Math.abs(cMax - cMin);
+  var waveFreq = diff * 1.5;
+  var waveAmp = diff === 0 ? 0 : Math.min(0.40, 0.15 + diff * 0.06);
+  var waveDx = Math.cos(waveAngle);
+  var waveDy = Math.sin(waveAngle);
+
+  // Hue noise from goodman gap
+  var hueNoise = Math.min(0.5, goodmanGap * 0.10);
+
+  var gridW = 2 * n - 1;
+  var margin = W * 0.03;
+  var cell = (W - 2 * margin) / gridW;
+
+  var bgStr = '#0a0a10';
+  var nonEdgeStr = hslToRgb(baseHue + 0.5, 0.10, 0.08);
+  var spineStr = hslToRgb(baseHue, 0.25, 0.18);
+  var outlineStr = hslToRgb(baseHue, 0.40, 0.25);
+
+  ctx.fillStyle = bgStr;
+  ctx.fillRect(0, 0, W, W);
+
+  for (var i = 0; i < n; i++) {
+    for (var j = 0; j < n; j++) {
+      var gx = j - i + (n - 1);
+      var gy = i + j;
+      var px = margin + gx * cell;
+      var py = margin + gy * cell;
+
       if (i === j) {
-        octx.fillStyle = '#1a1a2e';
-      } else if (matrix[i][j]) {
-        octx.fillStyle = '#6366f1';
+        ctx.fillStyle = spineStr;
+      } else if (!matrix[i][j]) {
+        ctx.fillStyle = nonEdgeStr;
       } else {
-        octx.fillStyle = '#0a0a0f';
+        var diag = (i + j) / (2 * (n - 1));
+        var hueIdx = Math.floor(diag * hues.length * 0.999);
+        var h = hues[Math.min(hueIdx, hues.length - 1)];
+        var drift = cellHash(i, j) * hueNoise;
+        var finalHue = h + drift;
+        var normX = gx / (gridW - 1);
+        var normY = gy / (gridW - 1);
+        var proj = normX * waveDx + normY * waveDy;
+        var wave = Math.sin(proj * waveFreq * Math.PI * 2);
+        var lightness = 0.55 + wave * waveAmp;
+        ctx.fillStyle = hslToRgb(finalHue, 0.80, lightness);
       }
-      octx.fillRect(px, py, cs, cs);
+      ctx.fillRect(px, py, cell + 0.5, cell + 0.5);
     }
   }
 
-  // Composite: blur base + sharp overlay
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-  const blurPx = Math.max(0.8, size / 60);
-  ctx.filter = 'blur(' + blurPx + 'px)';
-  ctx.drawImage(off, 0, 0, size, size);
-  ctx.filter = 'none';
-  ctx.globalAlpha = 0.55;
-  ctx.drawImage(off, 0, 0, size, size);
-  ctx.globalAlpha = 1.0;
+  // Diamond outline
+  var topX = margin + (n - 1) * cell + cell / 2, topY = margin;
+  var rightX = margin + gridW * cell, rightY = margin + (n - 1) * cell + cell / 2;
+  var bottomX = topX, bottomY = margin + gridW * cell;
+  var leftX = margin, leftY = rightY;
+
+  ctx.strokeStyle = outlineStr;
+  ctx.lineWidth = Math.max(1, W / 200);
+  ctx.beginPath();
+  ctx.moveTo(topX, topY); ctx.lineTo(rightX, rightY);
+  ctx.lineTo(bottomX, bottomY); ctx.lineTo(leftX, leftY);
+  ctx.closePath(); ctx.stroke();
+
+  ctx.lineWidth = Math.max(0.5, W / 400);
+  ctx.beginPath(); ctx.moveTo(topX, topY); ctx.lineTo(bottomX, bottomY); ctx.stroke();
+}
+
+// Main live search matrix — no scores, just hue from bits
+function drawMatrix(canvas, rgxf, size) {
+  drawGem(canvas, rgxf, size, null);
+}
+
+// Thumbnail for discoveries — full score data available
+function drawThumb(canvas, rgxf, size, score) {
+  drawGem(canvas, rgxf, size, score);
 }
 
 // State
@@ -1211,7 +1266,13 @@ function createEntryElement(entry) {
 
   const thumb = document.createElement('canvas');
   thumb.className = 'pinned-thumb';
-  drawThumb(thumb, entry.graph, 48);
+  drawThumb(thumb, entry.graph, 48, {
+    cid: cid,
+    goodman_gap: score.goodman_gap,
+    aut_order: score.aut_order,
+    c_omega: score.c_omega,
+    c_alpha: score.c_alpha
+  });
 
   const info = document.createElement('div');
   info.className = 'pinned-info';

@@ -3,7 +3,10 @@
 	import GemView from '$lib/components/GemView.svelte';
 
 	let status = $state<string>('connecting...');
-	let topGem = $state<{ rgxf: RgxfJson; label: string } | null>(null);
+	let topGem = $state<{
+		rgxf: RgxfJson; label: string; cid: string;
+		goodmanGap: number; cMax: number; cMin: number; autOrder: number;
+	} | null>(null);
 
 	async function checkHealth() {
 		try {
@@ -22,10 +25,16 @@
 			// Pick the most active leaderboard (highest entry count)
 			const best = summaries.reduce((a, b) => (a.entry_count > b.entry_count ? a : b));
 			const detail = await getLeaderboard(best.k, best.ell, best.n);
-			if (detail.top_graph) {
+			if (detail.top_graph && detail.entries.length > 0) {
+				const e = detail.entries[0];
 				topGem = {
 					rgxf: detail.top_graph,
-					label: `#1 — R(${best.k},${best.ell}) n=${best.n}`
+					label: `#1 — R(${best.k},${best.ell}) n=${best.n}`,
+					cid: e.graph_cid,
+					goodmanGap: e.goodman_gap,
+					cMax: e.tier1_max,
+					cMin: e.tier1_min,
+					autOrder: e.tier2_aut,
 				};
 			}
 		} catch {
@@ -55,7 +64,13 @@
 
 {#if topGem}
 	<div class="gem-showcase">
-		<GemView rgxf={topGem.rgxf} size={280} label={topGem.label} />
+		<a href="/submissions/{topGem.cid}" class="gem-link">
+			<GemView rgxf={topGem.rgxf} size={280} label={topGem.label}
+				graphCid={topGem.cid}
+				goodmanGap={topGem.goodmanGap}
+				cMax={topGem.cMax} cMin={topGem.cMin}
+				autOrder={topGem.autOrder} />
+		</a>
 	</div>
 {/if}
 
@@ -115,6 +130,16 @@
 		display: flex;
 		justify-content: center;
 		padding: 1rem 0 1.5rem;
+	}
+
+	.gem-link {
+		text-decoration: none;
+		transition: transform 0.15s;
+		display: inline-block;
+	}
+
+	.gem-link:hover {
+		transform: scale(1.03);
 	}
 
 	.grid {

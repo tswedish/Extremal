@@ -1,9 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { getLeaderboard, getLeaderboardGraphs, type LeaderboardDetail, type RgxfJson } from '$lib/api';
-	import MatrixView from '$lib/components/MatrixView.svelte';
-	import CircleLayout from '$lib/components/CircleLayout.svelte';
-	import GraphThumb from '$lib/components/GraphThumb.svelte';
 	import GemView from '$lib/components/GemView.svelte';
 
 	let detail = $state<LeaderboardDetail | null>(null);
@@ -309,13 +306,21 @@
 			{/if}
 		</div>
 
-		{#if detail.top_graph && currentPage === 1}
+		{#if graphs.length > 0 && currentPage === 1}
 			<section class="viz-section">
-				<h2>Top Graph</h2>
-				<div class="viz-row">
-					<GemView rgxf={detail.top_graph} size={360} label="MineGraph Gem" />
-					<MatrixView rgxf={detail.top_graph} size={360} />
-					<CircleLayout rgxf={detail.top_graph} size={360} />
+				<div class="gem-grid">
+					{#each detail.entries.slice(0, 10) as entry, i (entry.graph_cid)}
+						{#if graphs[i]}
+							<a href="/submissions/{entry.graph_cid}" class="gem-grid-item">
+								<GemView rgxf={graphs[i]} size={148}
+									graphCid={entry.graph_cid}
+									goodmanGap={entry.goodman_gap}
+									cMax={entry.tier1_max} cMin={entry.tier1_min}
+									autOrder={entry.tier2_aut} />
+								<span class="gem-rank">#{entry.rank}</span>
+							</a>
+						{/if}
+					{/each}
 				</div>
 			</section>
 		{/if}
@@ -343,7 +348,11 @@
 								<td class="thumb">
 									{#if graphs[i]}
 										<a href="/submissions/{entry.graph_cid}">
-											<GraphThumb rgxf={graphs[i]} size={48} />
+											<GemView rgxf={graphs[i]} size={36}
+												graphCid={entry.graph_cid}
+												goodmanGap={entry.goodman_gap}
+												cMax={entry.tier1_max} cMin={entry.tier1_min}
+												autOrder={entry.tier2_aut} />
 										</a>
 									{/if}
 								</td>
@@ -511,23 +520,48 @@
 		border-color: var(--color-accent);
 	}
 
-	h2 {
-		font-family: var(--font-mono);
-		font-size: 1.125rem;
-		font-weight: 600;
-		margin-bottom: 1rem;
-	}
-
 	.viz-section {
 		margin-bottom: 2rem;
 		padding-bottom: 2rem;
 		border-bottom: 1px solid var(--color-border);
 	}
 
-	.viz-row {
+	.gem-grid {
+		display: grid;
+		grid-template-columns: repeat(5, 1fr);
+		gap: 0.75rem;
+	}
+
+	@media (max-width: 700px) {
+		.gem-grid {
+			grid-template-columns: repeat(3, 1fr);
+		}
+	}
+
+	.gem-grid-item {
+		position: relative;
 		display: flex;
-		flex-wrap: wrap;
-		gap: 1.5rem;
+		justify-content: center;
+		text-decoration: none;
+		transition: transform 0.15s;
+	}
+
+	.gem-grid-item:hover {
+		transform: scale(1.05);
+	}
+
+	.gem-rank {
+		position: absolute;
+		bottom: 0.375rem;
+		right: 0.375rem;
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		font-weight: 700;
+		color: rgba(255, 255, 255, 0.7);
+		background: rgba(0, 0, 0, 0.5);
+		padding: 0.1rem 0.3rem;
+		border-radius: 0.25rem;
+		line-height: 1;
 	}
 
 	.table-section {
@@ -569,8 +603,8 @@
 	}
 
 	.thumb {
-		width: 48px;
-		padding: 0.375rem 0.5rem;
+		width: 36px;
+		padding: 0.25rem 0.375rem;
 	}
 
 	.thumb a {

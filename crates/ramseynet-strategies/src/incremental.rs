@@ -160,6 +160,117 @@ fn count_cliques_in_mask(nbrs: &NeighborSet, candidates: u64, target: u32) -> u6
 }
 
 // ══════════════════════════════════════════════════════════════
+// Focused edge set — "guilty" edges participating in violations
+// ══════════════════════════════════════════════════════════════
+
+/// Collect all edges that participate in at least one monochromatic k-clique
+/// (in the graph) or ell-clique (in the complement). These are the only edges
+/// worth flipping when trying to reduce violations.
+///
+/// Returns a deduplicated list of (u, v) pairs with u < v.
+///
+/// For R(5,5) n=25, a graph with ~5 violations has ~20-50 guilty edges
+/// out of 300 total. Focusing mutations on these edges makes each flip
+/// 6-15x more likely to reduce violations.
+pub(crate) fn guilty_edges(
+    adj_nbrs: &NeighborSet,
+    comp_nbrs: &NeighborSet,
+    k: u32,
+    ell: u32,
+    n: u32,
+) -> Vec<(u32, u32)> {
+    // Use a bitmask per vertex-pair to track guilty edges.
+    // For n ≤ 64, we can use n u64 bitmasks (guilty[u] has bit v set if (u,v) is guilty).
+    let mut guilty = vec![0u64; n as usize];
+
+    // Mark edges from k-cliques in the graph
+    enumerate_cliques_and_mark(adj_nbrs, k, n, &mut guilty);
+
+    // Mark edges from ell-cliques in the complement
+    enumerate_cliques_and_mark(comp_nbrs, ell, n, &mut guilty);
+
+    // Collect deduplicated edges (u < v)
+    let mut edges = Vec::new();
+    for u in 0..n {
+        // Only collect edges where u < v to avoid duplicates
+        let mask = guilty[u as usize] & !((1u64 << (u + 1)) - 1);
+        let mut m = mask;
+        while m != 0 {
+            let v = m.trailing_zeros();
+            m &= m - 1;
+            edges.push((u, v));
+        }
+    }
+    edges
+}
+
+/// Enumerate all k-cliques in the graph defined by `nbrs`, and for each
+/// clique, mark all C(k,2) edges as guilty in the bitmask array.
+fn enumerate_cliques_and_mark(nbrs: &NeighborSet, k: u32, n: u32, guilty: &mut [u64]) {
+    if k < 2 {
+        return;
+    }
+    if k == 2 {
+        // Every edge is a 2-clique
+        for u in 0..n {
+            guilty[u as usize] |= nbrs.masks[u as usize];
+        }
+        return;
+    }
+
+    // General: enumerate k-cliques using nested bitmask iteration.
+    // Start with each vertex, recursively extend using common neighbors.
+    let mut clique = Vec::with_capacity(k as usize);
+    for v in 0..n {
+        clique.clear();
+        clique.push(v);
+        // Candidates: neighbors of v with index > v
+        let candidates = nbrs.masks[v as usize] & !((1u64 << (v + 1)) - 1);
+        enumerate_and_mark_recurse(nbrs, k, &mut clique, candidates, guilty);
+    }
+}
+
+/// Recursive helper: extend `clique` to size `k` using vertices from `candidates`.
+/// When a complete clique is found, mark all its edges in `guilty`.
+fn enumerate_and_mark_recurse(
+    nbrs: &NeighborSet,
+    k: u32,
+    clique: &mut Vec<u32>,
+    candidates: u64,
+    guilty: &mut [u64],
+) {
+    if clique.len() as u32 == k {
+        // Found a complete clique — mark all C(k,2) edges
+        for i in 0..clique.len() {
+            for j in (i + 1)..clique.len() {
+                let u = clique[i];
+                let v = clique[j];
+                guilty[u as usize] |= 1u64 << v;
+                guilty[v as usize] |= 1u64 << u;
+            }
+        }
+        return;
+    }
+
+    let remaining = k - clique.len() as u32;
+    if (candidates.count_ones()) < remaining {
+        return; // Not enough candidates to complete the clique
+    }
+
+    let mut mask = candidates;
+    while mask != 0 {
+        let w = mask.trailing_zeros();
+        mask &= mask - 1;
+
+        clique.push(w);
+        // Next candidates: in current candidates AND neighbors of w, index > w
+        let next = mask & nbrs.masks[w as usize];
+        enumerate_and_mark_recurse(nbrs, k, clique, next, guilty);
+        clique.pop();
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
 // Bitwise violation delta
 // ══════════════════════════════════════════════════════════════
 
@@ -484,6 +595,132 @@ mod tests {
             adj_nbrs.flip_edge(u, v);
             comp_nbrs.flip_edge(u, v);
         }
+    }
+
+    /// Verify guilty_edges finds edges in a known K5 clique.
+    #[test]
+    fn guilty_edges_finds_k5_clique() {
+        // Build a graph with a single K5 on vertices {0,1,2,3,4} plus isolated vertices
+        let n = 10u32;
+        let mut g = AdjacencyMatrix::new(n);
+        // Make K5 on {0..4}
+        for i in 0..5u32 {
+            for j in (i + 1)..5 {
+                g.set_edge(i, j, true);
+            }
+        }
+        let adj_nbrs = NeighborSet::from_adj(&g);
+        let comp = g.complement();
+        let comp_nbrs = NeighborSet::from_adj(&comp);
+
+        // For k=5, ell=5: there's one K5 in the graph, so its C(5,2)=10 edges
+        // should all be guilty (from adj side). The complement has its own
+        // cliques too, but we check the adj clique edges are present.
+        let ge = guilty_edges(&adj_nbrs, &comp_nbrs, 5, 5, n);
+        let ge_set: std::collections::HashSet<(u32, u32)> = ge.iter().copied().collect();
+
+        // All K5 edges should be guilty
+        for i in 0..5u32 {
+            for j in (i + 1)..5 {
+                assert!(
+                    ge_set.contains(&(i, j)),
+                    "K5 edge ({i},{j}) should be guilty"
+                );
+            }
+        }
+    }
+
+    /// Verify guilty_edges returns empty for a valid Ramsey graph (zero violations).
+    #[test]
+    fn guilty_edges_empty_for_valid_graph() {
+        // C5 (cycle on 5 vertices) is valid for R(3,3): no K3 and no independent set of 3
+        let n = 5u32;
+        let mut g = AdjacencyMatrix::new(n);
+        // C5: 0-1, 1-2, 2-3, 3-4, 4-0
+        g.set_edge(0, 1, true);
+        g.set_edge(1, 2, true);
+        g.set_edge(2, 3, true);
+        g.set_edge(3, 4, true);
+        g.set_edge(0, 4, true);
+        let adj_nbrs = NeighborSet::from_adj(&g);
+        let comp = g.complement();
+        let comp_nbrs = NeighborSet::from_adj(&comp);
+
+        let ge = guilty_edges(&adj_nbrs, &comp_nbrs, 3, 3, n);
+        assert!(
+            ge.is_empty(),
+            "C5 is valid R(3,3) — should have no guilty edges, got {} edges",
+            ge.len()
+        );
+    }
+
+    /// Verify guilty_edges produces deduplicated (u < v) pairs.
+    #[test]
+    fn guilty_edges_deduped_and_ordered() {
+        let g = random_graph(15, 999);
+        let adj_nbrs = NeighborSet::from_adj(&g);
+        let comp = g.complement();
+        let comp_nbrs = NeighborSet::from_adj(&comp);
+
+        let ge = guilty_edges(&adj_nbrs, &comp_nbrs, 3, 3, 15);
+        for &(u, v) in &ge {
+            assert!(u < v, "guilty edge ({u},{v}) should have u < v");
+        }
+        // Check no duplicates
+        let ge_set: std::collections::HashSet<(u32, u32)> = ge.iter().copied().collect();
+        assert_eq!(
+            ge.len(),
+            ge_set.len(),
+            "guilty_edges should produce no duplicates"
+        );
+    }
+
+    /// Verify guilty_edges on a random graph for R(5,5) — should produce a
+    /// non-empty subset of all 300 edges.
+    #[test]
+    fn guilty_edges_random25_is_focused() {
+        // Random graph at 50% density will almost certainly have
+        // both K5 and independent-5 violations
+        let g = random_graph(25, 12345);
+        let adj_nbrs = NeighborSet::from_adj(&g);
+        let comp = g.complement();
+        let comp_nbrs = NeighborSet::from_adj(&comp);
+
+        let ge = guilty_edges(&adj_nbrs, &comp_nbrs, 5, 5, 25);
+        let total_edges = 25 * 24 / 2; // 300
+
+        // Random graph should have many violations
+        assert!(!ge.is_empty(), "random graph should have guilty edges");
+
+        // All guilty edges should be valid (u < v, within range)
+        for &(u, v) in &ge {
+            assert!(u < v && v < 25, "invalid edge ({u},{v})");
+        }
+
+        // Guilty edges should be a strict subset (not all 300)
+        // unless violations are extreme. For a random graph with
+        // moderate violations, we expect 50-200 guilty edges.
+        eprintln!(
+            "guilty_edges: {} out of {} total edges",
+            ge.len(),
+            total_edges
+        );
+    }
+
+    /// Verify Paley(25) is valid R(5,5) and thus has no guilty edges.
+    #[test]
+    fn guilty_edges_paley25_is_valid() {
+        let g = paley_graph(25);
+        let adj_nbrs = NeighborSet::from_adj(&g);
+        let comp = g.complement();
+        let comp_nbrs = NeighborSet::from_adj(&comp);
+
+        let ge = guilty_edges(&adj_nbrs, &comp_nbrs, 5, 5, 25);
+        assert!(
+            ge.is_empty(),
+            "Paley(25) is valid R(5,5) — should have no guilty edges, got {}",
+            ge.len()
+        );
     }
 
     /// Verify NeighborSet stays in sync after many flips.

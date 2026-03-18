@@ -441,7 +441,13 @@ async fn submit_graph(
     let id_sig_status = sig_status.to_string();
     // Validate and truncate metadata to 4KB max; must be valid JSON
     let id_metadata = req.metadata.as_ref().and_then(|m| {
-        if m.len() > 4096 { None } else { serde_json::from_str::<serde_json::Value>(m).ok().map(|_| m.clone()) }
+        if m.len() > 4096 {
+            None
+        } else {
+            serde_json::from_str::<serde_json::Value>(m)
+                .ok()
+                .map(|_| m.clone())
+        }
     });
     let (is_duplicate, lb_entry) = tokio::task::spawn_blocking(move || {
         let identity = SubmitIdentity {
@@ -557,8 +563,7 @@ async fn get_submission(
         .and_then(|e| e.metadata.as_ref())
         .or(submission.metadata.as_ref());
     // Parse metadata as JSON for structured response
-    let metadata_json: Option<Value> = metadata
-        .and_then(|m| serde_json::from_str(m).ok());
+    let metadata_json: Option<Value> = metadata.and_then(|m| serde_json::from_str(m).ok());
 
     Ok(Json(json!({
         "graph_cid": submission.graph_cid,
