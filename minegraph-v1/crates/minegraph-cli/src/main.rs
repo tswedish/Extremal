@@ -23,6 +23,10 @@ enum Commands {
         /// Display name for this identity.
         #[arg(long)]
         name: Option<String>,
+
+        /// Output path for the key file. Defaults to .config/minegraph/key.json.
+        #[arg(long, short)]
+        output: Option<String>,
     },
 
     /// Show current identity.
@@ -116,10 +120,18 @@ async fn main() -> Result<()> {
             println!("Created config directory: {}", dir.display());
         }
 
-        Commands::Keygen { name } => {
-            let dir = config_dir();
-            std::fs::create_dir_all(&dir)?;
-            let path = key_path();
+        Commands::Keygen { name, output } => {
+            let path = if let Some(ref out) = output {
+                let p = PathBuf::from(out);
+                if let Some(parent) = p.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                p
+            } else {
+                let dir = config_dir();
+                std::fs::create_dir_all(&dir)?;
+                key_path()
+            };
             if path.exists() {
                 anyhow::bail!("Key already exists at {}. Delete it first.", path.display());
             }
