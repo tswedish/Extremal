@@ -1,0 +1,16 @@
+[package]
+name = "minegraph-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+minegraph-types = { path = "../minegraph-types" }
+minegraph-graph = { path = "../minegraph-graph" }
+minegraph-scoring = { path = "../minegraph-scoring" }
+minegraph-identity = { path = "../minegraph-identity" }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "minegraph-worker-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+minegraph-types = { path = "../minegraph-types" }
+minegraph-graph = { path = "../minegraph-graph" }
+serde = { workspace = true }
+serde_json = { workspace = true }

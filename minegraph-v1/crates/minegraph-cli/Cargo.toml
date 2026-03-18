@@ -1,0 +1,19 @@
+[package]
+name = "minegraph-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+minegraph-types = { path = "../minegraph-types" }
+minegraph-graph = { path = "../minegraph-graph" }
+minegraph-scoring = { path = "../minegraph-scoring" }
+minegraph-identity = { path = "../minegraph-identity" }
+clap = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+toml = { workspace = true }
+hex = { workspace = true }

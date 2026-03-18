@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# MineGraph v1 task runner
+set -euo pipefail
+cd "$(dirname "$0")"
+
+RELEASE=""
+EXTRA_ARGS=()
+
+# Extract --release flag
+for arg in "$@"; do
+    if [[ "$arg" == "--release" ]]; then
+        RELEASE="--release"
+    fi
+done
+
+cmd="${1:-help}"
+shift || true
+
+# Remove --release from remaining args
+for arg in "$@"; do
+    if [[ "$arg" != "--release" ]]; then
+        EXTRA_ARGS+=("$arg")
+    fi
+done
+
+case "$cmd" in
+    ci)
+        echo "=== cargo fmt ==="
+        cargo fmt --check
+        echo "=== cargo clippy ==="
+        cargo clippy --all-targets -- -D warnings
+        echo "=== cargo test ==="
+        cargo test
+        echo "=== CI passed ==="
+        ;;
+    build)
+        cargo build $RELEASE "${EXTRA_ARGS[@]}"
+        ;;
+    test)
+        cargo test $RELEASE "${EXTRA_ARGS[@]}"
+        ;;
+    clippy)
+        cargo clippy --all-targets -- -D warnings
+        ;;
+    fmt)
+        cargo fmt
+        ;;
+    server)
+        cargo run $RELEASE -p minegraph-server -- "${EXTRA_ARGS[@]}"
+        ;;
+    worker)
+        cargo run $RELEASE -p minegraph-worker -- "${EXTRA_ARGS[@]}"
+        ;;
+    cli)
+        cargo run $RELEASE -p minegraph-cli -- "${EXTRA_ARGS[@]}"
+        ;;
+    migrate)
+        echo "Run migrations via: cargo run -p minegraph-server -- --migrate"
+        ;;
+    dev)
+        echo "Starting development environment..."
+        echo "  Requires: docker compose up -d (postgres)"
+        echo "  Then: ./run server"
+        docker compose up -d
+        ;;
+    help|*)
+        cat <<EOF
+MineGraph v1 task runner
+
+Usage: ./run <command> [--release] [args...]
+
+Commands:
+  ci          Full CI: fmt + clippy + test
+  build       Build all crates
+  test        Run tests
+  clippy      Run clippy
+  fmt         Format code
+  server      Start API server
+  worker      Start search worker
+  cli         Run minegraph CLI
+  dev         Start dev environment (docker compose)
+  help        Show this help
+
+Add --release for optimized builds.
+EOF
+        ;;
+esac

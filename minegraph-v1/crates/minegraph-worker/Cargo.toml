@@ -1,0 +1,17 @@
+[package]
+name = "minegraph-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+minegraph-types = { path = "../minegraph-types" }
+minegraph-graph = { path = "../minegraph-graph" }
+minegraph-identity = { path = "../minegraph-identity" }
+minegraph-worker-api = { path = "../minegraph-worker-api" }
+minegraph-worker-core = { path = "../minegraph-worker-core" }
+minegraph-strategies = { path = "../minegraph-strategies" }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,0 +1,10 @@
+/target/
+*.db
+*.db-wal
+*.db-shm
+.env
+.config/
+logs/
+node_modules/
+web/packages/*/build/
+web/packages/*/.svelte-kit/
