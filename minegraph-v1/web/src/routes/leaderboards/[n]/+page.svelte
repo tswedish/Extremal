@@ -178,7 +178,7 @@
 		{:else}
 			<table>
 				<thead><tr>
-					<th>Rank</th><th>CID</th><th>Gap</th><th>|Aut|</th><th>Identity</th><th>When</th>
+					<th>Rank</th><th>CID</th><th>Histogram</th><th>Gap</th><th>|Aut|</th><th>Identity</th><th>When</th>
 				</tr></thead>
 				<tbody>
 					{#each entries as entry (entry.cid)}
@@ -188,6 +188,18 @@
 							style={glow > 0 ? `background: rgba(99,102,241,${glow})` : ''}>
 							<td class="rank">#{entry.rank}</td>
 							<td><a href="/submissions/{entry.cid}" class="mono cc">{entry.cid.slice(0, 12)}</a></td>
+							<td class="hist-cell">
+								{#if entry.histogram?.tiers}
+									{#each entry.histogram.tiers.filter(t => t.k > 3) as t}
+										<span class="hist-tier" title="k={t.k}: red={t.red} blue={t.blue}">
+											<span class="hist-k">k{t.k}</span>
+											<span class="red">{t.red}</span><span class="hist-sep">/</span><span class="blue">{t.blue}</span>
+										</span>
+									{/each}
+								{:else}
+									<span class="sc">—</span>
+								{/if}
+							</td>
 							<td class="mono sc">{entry.goodman_gap ?? '—'}</td>
 							<td class="mono sc">{entry.aut_order ?? '—'}</td>
 							<td class="mono dm">{entry.key_id.slice(0, 8)}</td>
@@ -323,6 +335,12 @@
 	.sc { font-size: 0.7rem; color: var(--color-text-muted); }
 	.tc { font-size: 0.65rem; color: var(--color-text-dim); white-space: nowrap; }
 	.dm { color: var(--color-text-muted); font-size: 0.7rem; }
+	.hist-cell { font-family: var(--font-mono); font-size: 0.65rem; white-space: nowrap; }
+	.hist-tier { display: inline-flex; align-items: center; gap: 0.1rem; margin-right: 0.4rem; }
+	.hist-k { color: var(--color-text-dim); font-size: 0.55rem; margin-right: 0.15rem; }
+	.hist-sep { color: var(--color-text-dim); }
+	.red { color: #ef4444; }
+	.blue { color: #60a5fa; }
 	.end-msg { text-align: center; padding: 0.5rem; color: var(--color-text-dim); font-size: 0.7rem; font-style: italic; }
 
 	/* Detail */

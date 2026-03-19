@@ -1,11 +1,23 @@
+# Rust
 /target/
+
+# Database
 *.db
 *.db-wal
 *.db-shm
+
+# Environment / secrets
 .env
 .config/
+
+# Logs
 logs/
+
+# Node / SvelteKit
 node_modules/
-web/packages/*/build/
-web/packages/*/.svelte-kit/
-migrations/
+web/node_modules/
+web/.svelte-kit/
+web/build/
+
+# OS
+.DS_Store
