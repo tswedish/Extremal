@@ -114,17 +114,20 @@ pub async fn run_engine(
         "engine starting"
     );
 
-    let mut known_cids: HashSet<GraphCid> = HashSet::new();
-    let mut server_cids: HashSet<GraphCid> = HashSet::new(); // CIDs known to be on server
+    let mut known_cids: HashSet<GraphCid> = HashSet::new(); // CIDs in submit buffer or already submitted
+    let mut server_cids: HashSet<GraphCid> = HashSet::new(); // CIDs confirmed on server
     let mut server_graphs: Vec<String> = Vec::new();
     let mut submit_buffer: Vec<ScoredDiscovery> = Vec::new();
     let mut round: u64 = 0;
     let mut total_discoveries: u64 = 0;
     let mut total_submitted: u64 = 0;
     let mut total_admitted: u64 = 0;
-    let mut total_skipped: u64 = 0;
+    let mut total_skipped_threshold: u64 = 0;
+    let mut total_skipped_dup: u64 = 0;
+    let mut total_skipped_server: u64 = 0;
     let mut cid_sync_cursor: Option<String> = None;
     let mut threshold_score_bytes: Option<Vec<u8>> = None;
+    let mut leaderboard_full: bool = false;
     let mut current_best_g6: Option<String> = None;
     let mut current_violation_score: u32 = 0;
     let mut current_goodman_gap: Option<f64> = None;
@@ -164,12 +167,14 @@ pub async fn run_engine(
             // 1. Fetch admission threshold
             match client.get_threshold(config.n).await {
                 Ok(resp) => {
+                    leaderboard_full = resp.count >= resp.capacity as i64;
                     threshold_score_bytes = resp
                         .threshold_score_bytes
                         .and_then(|s| hex::decode(&s).ok());
                     debug!(
                         count = resp.count,
                         capacity = resp.capacity,
+                        full = leaderboard_full,
                         has_threshold = threshold_score_bytes.is_some(),
                         "threshold sync"
                     );
@@ -266,23 +271,26 @@ pub async fn run_engine(
             });
         }
 
-        // Score locally, canonicalize, dedup
+        // Score locally, canonicalize, dedup, threshold-gate
         let mut new_scored: Vec<ScoredDiscovery> = Vec::new();
-        let mut round_skipped: u64 = 0;
+        let mut round_skipped_dup: u64 = 0;
+        let mut round_skipped_server: u64 = 0;
+        let mut round_skipped_threshold: u64 = 0;
         for discovery in &raw_discoveries {
             // Canonical form + aut_order
             let (canonical, aut_order) = canonical_form(&discovery.graph);
             let canonical_g6 = graph6::encode(&canonical);
             let cid = minegraph_graph::compute_cid(&canonical);
 
-            // Dedup: skip if we've seen this CID
-            if !known_cids.insert(cid) {
+            // Dedup: skip if already in our submit pipeline or previously submitted
+            if known_cids.contains(&cid) {
+                round_skipped_dup += 1;
                 continue;
             }
 
             // Skip if server already has it
             if server_cids.contains(&cid) {
-                round_skipped += 1;
+                round_skipped_server += 1;
                 continue;
             }
 
@@ -293,14 +301,17 @@ pub async fn run_engine(
             let score = GraphScore::new(histogram, gap, aut_order, cid);
             let score_bytes = score.to_score_bytes(max_k);
 
-            // Threshold gate: skip if can't beat the worst on the leaderboard
-            if let Some(ref threshold) = threshold_score_bytes
+            // Threshold gate: ONLY when leaderboard is full
+            if leaderboard_full
+                && let Some(ref threshold) = threshold_score_bytes
                 && score_bytes.as_slice() >= threshold.as_slice()
             {
-                round_skipped += 1;
+                round_skipped_threshold += 1;
                 continue;
             }
 
+            // Passed all filters — mark as known and queue for submission
+            known_cids.insert(cid);
             new_scored.push(ScoredDiscovery {
                 graph: discovery.graph.clone(),
                 canonical_graph6: canonical_g6,
@@ -311,7 +322,9 @@ pub async fn run_engine(
 
         let new_unique = new_scored.len();
         total_discoveries += new_unique as u64;
-        total_skipped += round_skipped;
+        total_skipped_dup += round_skipped_dup;
+        total_skipped_server += round_skipped_server;
+        total_skipped_threshold += round_skipped_threshold;
 
         // Update current best for heartbeat visualization
         if let Some(ref best) = result.best_graph {
@@ -359,9 +372,12 @@ pub async fn run_engine(
                 }
             }
 
-            // Cap buffer
+            // Cap buffer — remove dropped CIDs from known_cids so they can be rediscovered
             if submit_buffer.len() > 500 {
-                submit_buffer.drain(..submit_buffer.len() - 200);
+                let dropped: Vec<_> = submit_buffer.drain(..submit_buffer.len() - 200).collect();
+                for d in &dropped {
+                    known_cids.remove(&d.cid);
+                }
             }
         }
 
@@ -375,10 +391,13 @@ pub async fn run_engine(
             round,
             iters = result.iterations_used,
             new_unique,
-            skipped = round_skipped,
+            skip_dup = round_skipped_dup,
+            skip_srv = round_skipped_server,
+            skip_thr = round_skipped_threshold,
             submitted = round_submitted,
             admitted = round_admitted,
             buffered = submit_buffer.len(),
+            full = leaderboard_full,
             valid = result.valid,
             ms = round_ms,
             total_discoveries,
@@ -448,7 +467,13 @@ pub async fn run_engine(
 
     info!(
         rounds = round,
-        total_discoveries, total_submitted, total_admitted, total_skipped, "engine stopped"
+        total_discoveries,
+        total_submitted,
+        total_admitted,
+        total_skipped_dup,
+        total_skipped_server,
+        total_skipped_threshold,
+        "engine stopped"
     );
 }
 
