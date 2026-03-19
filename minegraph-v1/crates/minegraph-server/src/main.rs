@@ -60,6 +60,20 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("migrations complete");
     }
 
+    // Trim any over-capacity leaderboards from prior runs
+    let summaries = store.list_leaderboard_ns().await.unwrap_or_default();
+    for s in &summaries {
+        if s.entry_count > config.leaderboard_capacity as i64 {
+            let trimmed = store
+                .trim_leaderboard(s.n, config.leaderboard_capacity)
+                .await
+                .unwrap_or(0);
+            if trimmed > 0 {
+                tracing::info!(n = s.n, trimmed, "trimmed over-capacity leaderboard");
+            }
+        }
+    }
+
     // Load or generate server identity
     let server_identity = if let Some(path) = &config.server_key {
         tracing::info!("loading server key from {path}");
@@ -79,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         leaderboard_capacity: config.leaderboard_capacity,
         max_k: config.max_k,
         events_tx,
+        workers: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     // Build router

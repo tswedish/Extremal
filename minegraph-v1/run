@@ -54,14 +54,30 @@ case "$cmd" in
     cli)
         cargo run $RELEASE -p minegraph-cli -- "${EXTRA_ARGS[@]}"
         ;;
-    migrate)
-        echo "Run migrations via: cargo run -p minegraph-server -- --migrate"
+    web-dev)
+        cd web && npm run dev
         ;;
-    dev)
-        echo "Starting development environment..."
-        echo "  Requires: docker compose up -d (postgres)"
-        echo "  Then: ./run server"
-        docker compose up -d
+    web-build)
+        cd web && npm run build
+        ;;
+    web-check)
+        cd web && npm run check
+        ;;
+    fleet)
+        ./scripts/fleet.sh "${EXTRA_ARGS[@]}" $RELEASE
+        ;;
+    stop-fleet)
+        echo "Killing all minegraph-worker processes..."
+        pkill -f "minegraph-worker" 2>/dev/null || true
+        sleep 1
+        if pgrep -f "minegraph-worker" > /dev/null 2>&1; then
+            echo "Force killing remaining..."
+            pkill -9 -f "minegraph-worker" 2>/dev/null || true
+        fi
+        echo "Done."
+        ;;
+    migrate)
+        cargo run -p minegraph-server -- --migrate
         ;;
     help|*)
         cat <<EOF
@@ -78,7 +94,11 @@ Commands:
   server      Start API server
   worker      Start search worker
   cli         Run minegraph CLI
-  dev         Start dev environment (docker compose)
+  web-dev     SvelteKit dev server on :5173
+  web-build   Build web app for production
+  fleet       Launch worker fleet (--workers N --n N)
+  stop-fleet  Kill all running workers
+  migrate     Run database migrations
   help        Show this help
 
 Add --release for optimized builds.

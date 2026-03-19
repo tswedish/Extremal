@@ -217,8 +217,12 @@ impl Store {
         offset: i64,
     ) -> Result<Vec<LeaderboardEntry>, StoreError> {
         let rows = sqlx::query_as::<_, LeaderboardEntry>(
-            "SELECT * FROM leaderboard WHERE n = $1
-             ORDER BY score_bytes ASC LIMIT $2 OFFSET $3",
+            "SELECT * FROM (
+                SELECT n, cid, key_id, score_bytes,
+                       (ROW_NUMBER() OVER (ORDER BY score_bytes ASC))::int AS rank,
+                       admitted_at
+                FROM leaderboard WHERE n = $1
+             ) ranked ORDER BY rank LIMIT $2 OFFSET $3",
         )
         .bind(n)
         .bind(limit)
@@ -231,8 +235,7 @@ impl Store {
     /// Get all distinct n values that have leaderboard entries.
     pub async fn list_leaderboard_ns(&self) -> Result<Vec<LeaderboardSummary>, StoreError> {
         let rows = sqlx::query_as::<_, LeaderboardSummary>(
-            "SELECT n, COUNT(*) as entry_count,
-                    MIN(score_bytes) as best_score_bytes
+            "SELECT n, COUNT(*)::bigint as entry_count
              FROM leaderboard GROUP BY n ORDER BY n",
         )
         .fetch_all(&self.pool)
@@ -342,8 +345,37 @@ impl Store {
         .execute(&mut *tx)
         .await?;
 
+        // Trim excess entries beyond capacity (handles concurrent insertion races)
+        sqlx::query(
+            "DELETE FROM leaderboard WHERE n = $1 AND cid IN (
+                SELECT cid FROM leaderboard WHERE n = $1
+                ORDER BY score_bytes DESC
+                LIMIT GREATEST(0, (SELECT COUNT(*) FROM leaderboard WHERE n = $1) - $2)
+             )",
+        )
+        .bind(n)
+        .bind(capacity as i64)
+        .execute(&mut *tx)
+        .await?;
+
         tx.commit().await?;
         Ok(Some(new_rank))
+    }
+
+    /// Trim a leaderboard to the given capacity, removing worst entries.
+    pub async fn trim_leaderboard(&self, n: i32, capacity: i32) -> Result<u64, StoreError> {
+        let result = sqlx::query(
+            "DELETE FROM leaderboard WHERE n = $1 AND cid IN (
+                SELECT cid FROM leaderboard WHERE n = $1
+                ORDER BY score_bytes DESC
+                LIMIT GREATEST(0, (SELECT COUNT(*) FROM leaderboard WHERE n = $1) - $2)
+             )",
+        )
+        .bind(n)
+        .bind(capacity as i64)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 
     /// Get CIDs on the leaderboard for incremental sync.
@@ -378,12 +410,41 @@ impl Store {
         offset: i64,
     ) -> Result<Vec<LeaderboardGraphRow>, StoreError> {
         let rows = sqlx::query_as::<_, LeaderboardGraphRow>(
-            "SELECT l.rank, l.cid, l.score_bytes, g.graph6
-             FROM leaderboard l
-             JOIN graphs g ON l.cid = g.cid
-             WHERE l.n = $1
-             ORDER BY l.score_bytes ASC
-             LIMIT $2 OFFSET $3",
+            "SELECT * FROM (
+                SELECT (ROW_NUMBER() OVER (ORDER BY l.score_bytes ASC))::int AS rank,
+                       l.cid, l.score_bytes, g.graph6
+                FROM leaderboard l
+                JOIN graphs g ON l.cid = g.cid
+                WHERE l.n = $1
+             ) ranked ORDER BY rank LIMIT $2 OFFSET $3",
+        )
+        .bind(n)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Get rich leaderboard entries (with graph6 + score data).
+    pub async fn get_leaderboard_rich(
+        &self,
+        n: i32,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<models::LeaderboardRichEntry>, StoreError> {
+        let rows = sqlx::query_as::<_, models::LeaderboardRichEntry>(
+            "SELECT * FROM (
+                SELECT
+                    (ROW_NUMBER() OVER (ORDER BY l.score_bytes ASC))::int AS rank,
+                    l.cid, l.key_id, g.graph6,
+                    s.goodman_gap, s.aut_order, s.histogram,
+                    l.admitted_at
+                FROM leaderboard l
+                JOIN graphs g ON l.cid = g.cid
+                LEFT JOIN scores s ON l.cid = s.cid
+                WHERE l.n = $1
+             ) ranked ORDER BY rank LIMIT $2 OFFSET $3",
         )
         .bind(n)
         .bind(limit)

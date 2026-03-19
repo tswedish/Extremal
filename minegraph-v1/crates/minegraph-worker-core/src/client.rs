@@ -68,6 +68,13 @@ impl ServerClient {
         }
     }
 
+    /// Get the key_id of the signing identity, if any.
+    pub fn key_id(&self) -> Option<String> {
+        self.identity
+            .as_ref()
+            .map(|id| id.key_id.as_str().to_string())
+    }
+
     /// Health check.
     pub async fn health(&self) -> Result<serde_json::Value, reqwest::Error> {
         self.http
@@ -161,6 +168,16 @@ impl ServerClient {
             let text = resp.text().await.unwrap_or_default();
             Err(format!("submit rejected ({status}): {text}"))
         }
+    }
+
+    /// Send a heartbeat with worker stats.
+    pub async fn heartbeat(&self, heartbeat: &serde_json::Value) {
+        let _ = self
+            .http
+            .post(format!("{}/api/workers/heartbeat", self.base_url))
+            .json(heartbeat)
+            .send()
+            .await;
     }
 }
 

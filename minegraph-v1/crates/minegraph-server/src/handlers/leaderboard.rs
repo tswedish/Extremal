@@ -33,7 +33,7 @@ pub async fn list_leaderboards(State(state): State<AppState>) -> Result<Json<Val
     Ok(Json(json!({ "leaderboards": result })))
 }
 
-/// GET /api/leaderboards/:n — paginated leaderboard.
+/// GET /api/leaderboards/:n — paginated leaderboard with graph + score data.
 pub async fn get_leaderboard(
     State(state): State<AppState>,
     Path(n): Path<i32>,
@@ -41,21 +41,9 @@ pub async fn get_leaderboard(
 ) -> Result<Json<Value>, ApiError> {
     let entries = state
         .store
-        .get_leaderboard(n, params.limit, params.offset)
+        .get_leaderboard_rich(n, params.limit, params.offset)
         .await?;
     let total = state.store.leaderboard_count(n).await?;
-
-    // Get the top graph's graph6 for visualization
-    let top_graph = if params.offset == 0 {
-        state
-            .store
-            .get_leaderboard_graphs(n, 1, 0)
-            .await?
-            .into_iter()
-            .next()
-    } else {
-        None
-    };
 
     let result: Vec<Value> = entries
         .iter()
@@ -64,20 +52,29 @@ pub async fn get_leaderboard(
                 "rank": e.rank,
                 "cid": e.cid,
                 "key_id": e.key_id,
+                "graph6": e.graph6,
+                "goodman_gap": e.goodman_gap,
+                "aut_order": e.aut_order,
+                "histogram": e.histogram,
                 "admitted_at": e.admitted_at.to_rfc3339(),
             })
         })
         .collect();
 
+    // Top graph is just the first entry
+    let top_graph = entries.first().map(|e| {
+        json!({
+            "cid": e.cid,
+            "graph6": e.graph6,
+            "rank": e.rank,
+        })
+    });
+
     Ok(Json(json!({
         "n": n,
         "total": total,
         "entries": result,
-        "top_graph": top_graph.map(|g| json!({
-            "cid": g.cid,
-            "graph6": g.graph6,
-            "rank": g.rank,
-        })),
+        "top_graph": top_graph,
     })))
 }
 

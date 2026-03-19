@@ -1,10 +1,23 @@
 //! Worker engine: the main search round loop.
+//!
+//! Key optimizations (ported from RamseyNet prototype):
+//! - **Threshold gate**: fetch admission threshold once per round, skip
+//!   submissions that can't beat it (saves ~90%+ of network calls)
+//! - **Server CID cache**: incremental CID sync, never re-submit known CIDs
+//! - **Local canonical scoring**: score + canonicalize locally before deciding
+//!   to submit
+//! - **Batched submissions**: buffer discoveries, drain N per round
+//! - **Backoff on failure**: exponential backoff when rounds produce nothing
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use minegraph_graph::{AdjacencyMatrix, graph6};
+use minegraph_scoring::automorphism::canonical_form;
+use minegraph_scoring::goodman;
+use minegraph_scoring::histogram::CliqueHistogram;
+use minegraph_scoring::score::GraphScore;
 use minegraph_types::GraphCid;
 use minegraph_worker_api::{ProgressInfo, RawDiscovery, SearchJob, SearchObserver, SearchStrategy};
 use rand::{Rng, SeedableRng};
@@ -16,35 +29,32 @@ use crate::client::ServerClient;
 /// Configuration for the worker engine.
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
-    /// Target vertex count (leaderboard index).
     pub n: u32,
-    /// Maximum iterations per search round.
     pub max_iters: u64,
-    /// Server URL.
     pub server_url: String,
-    /// Strategy ID to use.
     pub strategy_id: String,
-    /// Strategy-specific config JSON (beam_width, max_depth, target_k, etc.).
     pub strategy_config: serde_json::Value,
-    /// Sample bias for leaderboard seeding (0.0 = uniform, 1.0 = always top).
     pub sample_bias: f64,
-    /// Number of leaderboard graphs to fetch for seeding.
     pub leaderboard_sample_size: u32,
-    /// Max known CIDs to track.
     pub max_known_cids: usize,
-    /// Run without server (local search only).
     pub offline: bool,
-    /// Noise flips to apply to seed graphs.
     pub noise_flips: u32,
-    /// Max submissions per round (batch size). 0 = unlimited.
     pub max_submissions_per_round: usize,
-    /// Worker metadata (commit hash, worker ID, etc.).
     pub metadata: Option<serde_json::Value>,
+}
+
+// ── Scored discovery (locally scored + canonical) ────────────
+
+#[allow(dead_code)]
+struct ScoredDiscovery {
+    graph: AdjacencyMatrix,
+    canonical_graph6: String,
+    cid: GraphCid,
+    score: GraphScore,
 }
 
 // ── Discovery-collecting observer ───────────────────────────
 
-/// Observer that collects discoveries in a thread-safe buffer.
 struct CollectingObserver {
     discoveries: Mutex<Vec<RawDiscovery>>,
 }
@@ -62,9 +72,7 @@ impl CollectingObserver {
 }
 
 impl SearchObserver for CollectingObserver {
-    fn on_progress(&self, _info: &ProgressInfo) {
-        // Could log or send to a dashboard; for now, no-op
-    }
+    fn on_progress(&self, _info: &ProgressInfo) {}
 
     fn on_discovery(&self, discovery: &RawDiscovery) {
         self.discoveries.lock().unwrap().push(discovery.clone());
@@ -80,7 +88,6 @@ pub async fn run_engine(
     client: Option<ServerClient>,
     shutdown: watch::Receiver<bool>,
 ) {
-    // Find strategy
     let strategy = strategies
         .iter()
         .find(|s| s.id() == config.strategy_id)
@@ -93,6 +100,12 @@ pub async fn run_engine(
             strategies[0].clone()
         });
 
+    let max_k = config
+        .strategy_config
+        .get("target_k")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5) as u32;
+
     info!(
         n = config.n,
         strategy = strategy.id(),
@@ -102,22 +115,40 @@ pub async fn run_engine(
     );
 
     let mut known_cids: HashSet<GraphCid> = HashSet::new();
-    let mut server_graphs: Vec<String> = Vec::new(); // graph6 strings from leaderboard
-    let mut submit_buffer: Vec<RawDiscovery> = Vec::new(); // pending submissions
+    let mut server_cids: HashSet<GraphCid> = HashSet::new(); // CIDs known to be on server
+    let mut server_graphs: Vec<String> = Vec::new();
+    let mut submit_buffer: Vec<ScoredDiscovery> = Vec::new();
     let mut round: u64 = 0;
     let mut total_discoveries: u64 = 0;
     let mut total_submitted: u64 = 0;
     let mut total_admitted: u64 = 0;
+    let mut total_skipped: u64 = 0;
+    let mut consecutive_failures: u32 = 0;
     let mut cid_sync_cursor: Option<String> = None;
+    let mut threshold_score_bytes: Option<Vec<u8>> = None;
+    let mut current_best_g6: Option<String> = None;
+    let mut current_violation_score: u32 = 0;
+    let mut current_goodman_gap: Option<f64> = None;
+    let mut current_aut_order: Option<f64> = None;
     let mut rng = rand::rngs::SmallRng::from_entropy();
+    let start_time = Instant::now();
+
+    let worker_id = config
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("worker_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("default")
+        .to_string();
+
+    let key_id = client.as_ref().and_then(|c| c.key_id()).unwrap_or_default();
     let batch_size = if config.max_submissions_per_round > 0 {
         config.max_submissions_per_round
     } else {
-        20 // sensible default
+        20
     };
 
     loop {
-        // Check shutdown
         if *shutdown.borrow() {
             info!("shutdown signal received");
             break;
@@ -130,24 +161,46 @@ pub async fn run_engine(
         if !config.offline
             && let Some(ref client) = client
         {
-            // Sync CIDs
+            // 1. Fetch admission threshold
+            match client.get_threshold(config.n).await {
+                Ok(resp) => {
+                    threshold_score_bytes = resp
+                        .threshold_score_bytes
+                        .and_then(|s| hex::decode(&s).ok());
+                    debug!(
+                        count = resp.count,
+                        capacity = resp.capacity,
+                        has_threshold = threshold_score_bytes.is_some(),
+                        "threshold sync"
+                    );
+                }
+                Err(e) => debug!("threshold fetch failed: {e}"),
+            }
+
+            // 2. Sync CIDs (incremental)
             match client.get_cids(config.n, cid_sync_cursor.as_deref()).await {
                 Ok(resp) => {
                     let new_count = resp.cids.len();
                     for cid_hex in &resp.cids {
                         if let Ok(cid) = GraphCid::from_hex(cid_hex) {
                             known_cids.insert(cid);
+                            server_cids.insert(cid);
                         }
                     }
                     if new_count > 0 {
                         cid_sync_cursor = Some(chrono::Utc::now().to_rfc3339());
-                        debug!(new_cids = new_count, total = known_cids.len(), "CID sync");
+                        debug!(
+                            new_cids = new_count,
+                            known = known_cids.len(),
+                            server = server_cids.len(),
+                            "CID sync"
+                        );
                     }
                 }
                 Err(e) => warn!("CID sync failed: {e}"),
             }
 
-            // Fetch seed graphs (periodically, not every round)
+            // 3. Fetch seed graphs (every 10 rounds)
             if round == 1 || round.is_multiple_of(10) {
                 match client
                     .get_graphs(config.n, config.leaderboard_sample_size, 0)
@@ -185,7 +238,7 @@ pub async fn run_engine(
             carry_state: None,
         };
 
-        // ── Run search (blocking) with collecting observer ──
+        // ── Run search ──────────────────────────────────────
         let strategy_clone = strategy.clone();
         let observer = Arc::new(CollectingObserver::new());
         let observer_clone = observer.clone();
@@ -202,7 +255,7 @@ pub async fn run_engine(
             }
         };
 
-        // Collect raw discoveries from observer + best_graph
+        // ── Collect + score + dedup discoveries ─────────────
         let mut raw_discoveries: Vec<RawDiscovery> = observer.drain();
         if let Some(ref best) = result.best_graph
             && result.valid
@@ -213,32 +266,69 @@ pub async fn run_engine(
             });
         }
 
-        // Dedup by canonical CID (nauty is expensive, but we only do it
-        // on valid graphs and this prevents submitting thousands of
-        // isomorphic duplicates)
-        let mut discoveries_to_submit: Vec<RawDiscovery> = Vec::new();
+        // Score locally, canonicalize, dedup
+        let mut new_scored: Vec<ScoredDiscovery> = Vec::new();
+        let mut round_skipped: u64 = 0;
         for discovery in &raw_discoveries {
-            let (canonical, _) = minegraph_scoring::automorphism::canonical_form(&discovery.graph);
+            // Canonical form + aut_order
+            let (canonical, aut_order) = canonical_form(&discovery.graph);
+            let canonical_g6 = graph6::encode(&canonical);
             let cid = minegraph_graph::compute_cid(&canonical);
-            if known_cids.insert(cid) {
-                discoveries_to_submit.push(discovery.clone());
+
+            // Dedup: skip if we've seen this CID
+            if !known_cids.insert(cid) {
+                continue;
+            }
+
+            // Skip if server already has it
+            if server_cids.contains(&cid) {
+                round_skipped += 1;
+                continue;
+            }
+
+            // Score locally
+            let histogram = CliqueHistogram::compute(&discovery.graph, max_k);
+            let (red_tri, blue_tri) = histogram.tier(3).map(|t| (t.red, t.blue)).unwrap_or((0, 0));
+            let gap = goodman::goodman_gap(config.n, red_tri, blue_tri);
+            let score = GraphScore::new(histogram, gap, aut_order, cid);
+            let score_bytes = score.to_score_bytes(max_k);
+
+            // Threshold gate: skip if can't beat the worst on the leaderboard
+            if let Some(ref threshold) = threshold_score_bytes
+                && score_bytes.as_slice() >= threshold.as_slice()
+            {
+                round_skipped += 1;
+                continue;
+            }
+
+            new_scored.push(ScoredDiscovery {
+                graph: discovery.graph.clone(),
+                canonical_graph6: canonical_g6,
+                cid,
+                score,
+            });
+        }
+
+        let new_unique = new_scored.len();
+        total_discoveries += new_unique as u64;
+        total_skipped += round_skipped;
+
+        // Update current best for heartbeat visualization
+        if let Some(ref best) = result.best_graph {
+            current_best_g6 = Some(graph6::encode(best));
+            // Use the first scored discovery's data if available, else basic info
+            if let Some(scored) = new_scored.first() {
+                current_goodman_gap = Some(scored.score.goodman_gap as f64);
+                current_aut_order = Some(scored.score.aut_order);
+                current_violation_score = 0; // scored discoveries are valid
             }
         }
-
-        let new_unique = discoveries_to_submit.len();
-        total_discoveries += new_unique as u64;
-
-        // Add new unique discoveries to the submission buffer
-        submit_buffer.extend(discoveries_to_submit);
-
-        if !raw_discoveries.is_empty() {
-            debug!(
-                raw = raw_discoveries.len(),
-                unique = new_unique,
-                buffered = submit_buffer.len(),
-                "discovery dedup"
-            );
+        if !result.valid {
+            current_violation_score = 1; // non-zero indicates not valid
         }
+
+        // Add to submit buffer
+        submit_buffer.extend(new_scored);
 
         // ── Submit a batch from the buffer ──────────────────
         let mut round_submitted = 0u64;
@@ -247,63 +337,96 @@ pub async fn run_engine(
         if !config.offline
             && let Some(ref client) = client
         {
-            let to_submit: Vec<_> = submit_buffer
-                .drain(..submit_buffer.len().min(batch_size))
-                .collect();
+            let count = submit_buffer.len().min(batch_size);
+            let to_submit: Vec<_> = submit_buffer.drain(..count).collect();
             for discovery in &to_submit {
                 let g6 = graph6::encode(&discovery.graph);
                 match client.submit(config.n, &g6, config.metadata.as_ref()).await {
                     Ok(resp) => {
                         round_submitted += 1;
+                        server_cids.insert(discovery.cid);
                         if resp.admitted {
                             round_admitted += 1;
+                            consecutive_failures = 0;
                             if let Some(rank) = resp.rank {
-                                info!(
-                                    cid = %resp.cid,
-                                    rank,
-                                    "admitted to leaderboard"
-                                );
+                                info!(cid = %resp.cid, rank, "admitted");
                             }
                         }
                     }
                     Err(e) => {
                         warn!("submit failed: {e}");
-                        break; // stop submitting this round on failure
+                        break;
                     }
                 }
             }
 
-            // Cap buffer size to prevent unbounded growth
-            if submit_buffer.len() > 1000 {
-                let excess = submit_buffer.len() - 500;
-                submit_buffer.drain(..excess);
-                debug!(
-                    trimmed = excess,
-                    remaining = submit_buffer.len(),
-                    "trimmed submit buffer"
-                );
+            // Cap buffer
+            if submit_buffer.len() > 500 {
+                submit_buffer.drain(..submit_buffer.len() - 200);
             }
         }
 
         total_submitted += round_submitted;
         total_admitted += round_admitted;
 
+        // ── Backoff on empty rounds ─────────────────────────
+        if new_unique == 0 && !result.valid {
+            consecutive_failures += 1;
+            let backoff = std::cmp::min(1u64 << consecutive_failures.min(5), 60);
+            debug!(consecutive_failures, backoff_secs = backoff, "backoff");
+            tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
+        } else if new_unique > 0 {
+            consecutive_failures = 0;
+        }
+
         let round_elapsed = round_start.elapsed();
+        let round_ms = round_elapsed.as_millis() as u64;
+
         info!(
             round,
             iters = result.iterations_used,
             new_unique,
+            skipped = round_skipped,
             submitted = round_submitted,
             admitted = round_admitted,
             buffered = submit_buffer.len(),
             valid = result.valid,
-            ms = round_elapsed.as_millis() as u64,
+            ms = round_ms,
             total_discoveries,
             total_admitted,
             "round complete"
         );
 
-        // Trim known CIDs if too large
+        // ── Heartbeat (every 5 rounds) ──────────────────────
+        if !config.offline
+            && round.is_multiple_of(5)
+            && let Some(ref client) = client
+        {
+            let heartbeat = serde_json::json!({
+                "worker_id": worker_id,
+                "key_id": key_id,
+                "strategy": strategy.id(),
+                "n": config.n,
+                "stats": {
+                    "round": round,
+                    "total_discoveries": total_discoveries,
+                    "total_submitted": total_submitted,
+                    "total_admitted": total_admitted,
+                    "buffered": submit_buffer.len(),
+                    "last_round_ms": round_ms,
+                    "new_unique_last_round": new_unique,
+                    "uptime_secs": start_time.elapsed().as_secs(),
+                    "current_graph6": current_best_g6,
+                    "violation_score": current_violation_score,
+                    "goodman_gap": current_goodman_gap,
+                    "aut_order": current_aut_order,
+                },
+                "last_seen": chrono::Utc::now().to_rfc3339(),
+            });
+            client.heartbeat(&heartbeat).await;
+        }
+
+        // Trim known CIDs
         if known_cids.len() > config.max_known_cids * 2 {
             let target = config.max_known_cids;
             let drain: Vec<_> = known_cids
@@ -315,8 +438,18 @@ pub async fn run_engine(
                 known_cids.remove(&cid);
             }
         }
+        if server_cids.len() > config.max_known_cids {
+            let target = config.max_known_cids / 2;
+            let drain: Vec<_> = server_cids
+                .iter()
+                .take(server_cids.len() - target)
+                .copied()
+                .collect();
+            for cid in drain {
+                server_cids.remove(&cid);
+            }
+        }
 
-        // Check shutdown again before next round
         if shutdown.has_changed().unwrap_or(false) && *shutdown.borrow() {
             info!("shutdown signal received after round");
             break;
@@ -325,7 +458,7 @@ pub async fn run_engine(
 
     info!(
         rounds = round,
-        total_discoveries, total_submitted, total_admitted, "engine stopped"
+        total_discoveries, total_submitted, total_admitted, total_skipped, "engine stopped"
     );
 }
 
@@ -337,9 +470,7 @@ fn pick_seed(
     noise_flips: u32,
     rng: &mut impl Rng,
 ) -> Option<AdjacencyMatrix> {
-    // Try leaderboard graphs first
     if !server_graphs.is_empty() {
-        // Biased sampling: sample_bias controls how much we prefer top-ranked.
         let idx = if sample_bias > 0.0 && server_graphs.len() > 1 {
             let u: f64 = rng.r#gen();
             let biased = u.powf(1.0 / (1.0 - sample_bias + 0.01));
@@ -358,7 +489,6 @@ fn pick_seed(
         }
     }
 
-    // Fallback: Paley graph (much better seed than random for Ramsey search)
     let mut seed = minegraph_strategies::init::paley_graph(n);
     if noise_flips > 0 {
         minegraph_strategies::init::perturb(&mut seed, noise_flips, rng);

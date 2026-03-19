@@ -61,7 +61,6 @@ pub struct LeaderboardEntry {
 pub struct LeaderboardSummary {
     pub n: i32,
     pub entry_count: i64,
-    pub best_score_bytes: Option<Vec<u8>>,
 }
 
 /// A leaderboard entry joined with graph6 data.
@@ -71,6 +70,19 @@ pub struct LeaderboardGraphRow {
     pub cid: String,
     pub score_bytes: Vec<u8>,
     pub graph6: String,
+}
+
+/// A rich leaderboard entry with graph data and scores.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LeaderboardRichEntry {
+    pub rank: i32,
+    pub cid: String,
+    pub key_id: String,
+    pub graph6: String,
+    pub goodman_gap: Option<f64>,
+    pub aut_order: Option<f64>,
+    pub histogram: Option<serde_json::Value>,
+    pub admitted_at: DateTime<Utc>,
 }
 
 /// A verification receipt signed by the server.
