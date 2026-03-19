@@ -515,4 +515,101 @@ impl Store {
         .await?;
         Ok(())
     }
+
+    // ── Snapshot operations ─────────────────────────────────
+
+    /// Capture a leaderboard snapshot (called periodically by background task).
+    pub async fn capture_snapshot(&self, n: i32) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO leaderboard_snapshots
+                (n, entry_count, best_gap, worst_gap, median_gap, avg_gap,
+                 best_aut, avg_aut, total_k4_red, total_k4_blue, total_k5_red, total_k5_blue)
+             SELECT
+                $1,
+                COUNT(*)::int,
+                MIN(s.goodman_gap),
+                MAX(s.goodman_gap),
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s.goodman_gap),
+                AVG(s.goodman_gap),
+                MAX(s.aut_order),
+                AVG(s.aut_order),
+                COALESCE(SUM((s.histogram->'tiers'->1->>'red')::bigint), 0),
+                COALESCE(SUM((s.histogram->'tiers'->1->>'blue')::bigint), 0),
+                COALESCE(SUM((s.histogram->'tiers'->2->>'red')::bigint), 0),
+                COALESCE(SUM((s.histogram->'tiers'->2->>'blue')::bigint), 0)
+             FROM leaderboard l
+             JOIN scores s ON l.cid = s.cid
+             WHERE l.n = $1",
+        )
+        .bind(n)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get leaderboard snapshots for history chart.
+    pub async fn get_snapshots(
+        &self,
+        n: i32,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: i64,
+    ) -> Result<Vec<models::LeaderboardSnapshot>, StoreError> {
+        let rows = if let Some(since) = since {
+            sqlx::query_as::<_, models::LeaderboardSnapshot>(
+                "SELECT * FROM leaderboard_snapshots
+                 WHERE n = $1 AND snapshot_at >= $2
+                 ORDER BY snapshot_at ASC LIMIT $3",
+            )
+            .bind(n)
+            .bind(since)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, models::LeaderboardSnapshot>(
+                "SELECT * FROM leaderboard_snapshots
+                 WHERE n = $1 ORDER BY snapshot_at ASC LIMIT $2",
+            )
+            .bind(n)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows)
+    }
+
+    // ── Identity stats ──────────────────────────────────────
+
+    /// Get submission count and admission count for an identity.
+    pub async fn get_identity_stats(&self, key_id: &str) -> Result<(i64, i64), StoreError> {
+        let (sub_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM submissions WHERE key_id = $1")
+                .bind(key_id)
+                .fetch_one(&self.pool)
+                .await?;
+
+        let (admit_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM leaderboard WHERE key_id = $1")
+                .bind(key_id)
+                .fetch_one(&self.pool)
+                .await?;
+
+        Ok((sub_count, admit_count))
+    }
+
+    // ── Export ───────────────────────────────────────────────
+
+    /// Get all graph6 strings from a leaderboard (for export).
+    pub async fn export_leaderboard_graph6(&self, n: i32) -> Result<Vec<String>, StoreError> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT g.graph6 FROM leaderboard l
+             JOIN graphs g ON l.cid = g.cid
+             WHERE l.n = $1
+             ORDER BY l.score_bytes ASC",
+        )
+        .bind(n)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
 }

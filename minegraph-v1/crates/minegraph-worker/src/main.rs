@@ -75,13 +75,10 @@ struct Cli {
     #[arg(long)]
     signing_key: Option<String>,
 
-    /// Git commit hash for provenance.
+    /// Metadata JSON string (e.g. '{"worker_id":"w1","commit_hash":"abc123"}').
+    /// Attached to submissions and shown in the dashboard. Max 4KB.
     #[arg(long)]
-    commit_hash: Option<String>,
-
-    /// Worker ID for metadata.
-    #[arg(long)]
-    worker_id: Option<String>,
+    metadata: Option<String>,
 }
 
 #[tokio::main]
@@ -140,21 +137,20 @@ async fn main() {
         "target_ell": cli.target_ell,
     });
 
-    // Build metadata
-    let metadata = {
-        let mut m = serde_json::Map::new();
-        if let Some(ref hash) = cli.commit_hash {
-            m.insert("commit_hash".into(), serde_json::json!(hash));
+    // Parse metadata JSON
+    let metadata: Option<serde_json::Value> = cli.metadata.as_deref().and_then(|s| {
+        if s.len() > 4096 {
+            tracing::error!("metadata exceeds 4KB limit, ignoring");
+            return None;
         }
-        if let Some(ref wid) = cli.worker_id {
-            m.insert("worker_id".into(), serde_json::json!(wid));
+        match serde_json::from_str(s) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::error!("invalid metadata JSON: {e}");
+                None
+            }
         }
-        if m.is_empty() {
-            None
-        } else {
-            Some(serde_json::Value::Object(m))
-        }
-    };
+    });
 
     let config = EngineConfig {
         n: cli.n,

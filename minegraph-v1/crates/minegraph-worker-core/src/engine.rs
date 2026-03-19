@@ -123,7 +123,6 @@ pub async fn run_engine(
     let mut total_submitted: u64 = 0;
     let mut total_admitted: u64 = 0;
     let mut total_skipped: u64 = 0;
-    let mut consecutive_failures: u32 = 0;
     let mut cid_sync_cursor: Option<String> = None;
     let mut threshold_score_bytes: Option<Vec<u8>> = None;
     let mut current_best_g6: Option<String> = None;
@@ -133,6 +132,7 @@ pub async fn run_engine(
     let mut rng = rand::rngs::SmallRng::from_entropy();
     let start_time = Instant::now();
 
+    // Extract worker_id from metadata for heartbeat labeling, fall back to a default
     let worker_id = config
         .metadata
         .as_ref()
@@ -347,7 +347,6 @@ pub async fn run_engine(
                         server_cids.insert(discovery.cid);
                         if resp.admitted {
                             round_admitted += 1;
-                            consecutive_failures = 0;
                             if let Some(rank) = resp.rank {
                                 info!(cid = %resp.cid, rank, "admitted");
                             }
@@ -368,16 +367,6 @@ pub async fn run_engine(
 
         total_submitted += round_submitted;
         total_admitted += round_admitted;
-
-        // ── Backoff on empty rounds ─────────────────────────
-        if new_unique == 0 && !result.valid {
-            consecutive_failures += 1;
-            let backoff = std::cmp::min(1u64 << consecutive_failures.min(5), 60);
-            debug!(consecutive_failures, backoff_secs = backoff, "backoff");
-            tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
-        } else if new_unique > 0 {
-            consecutive_failures = 0;
-        }
 
         let round_elapsed = round_start.elapsed();
         let round_ms = round_elapsed.as_millis() as u64;
@@ -406,6 +395,7 @@ pub async fn run_engine(
                 "worker_id": worker_id,
                 "key_id": key_id,
                 "strategy": strategy.id(),
+                "metadata": config.metadata,
                 "n": config.n,
                 "stats": {
                     "round": round,

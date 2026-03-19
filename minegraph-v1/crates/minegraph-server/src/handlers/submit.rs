@@ -33,6 +33,14 @@ pub async fn submit_graph(
     State(state): State<AppState>,
     Json(req): Json<SubmitRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    // 0. Validate metadata size
+    if let Some(ref meta) = req.metadata {
+        let meta_str = serde_json::to_string(meta).unwrap_or_default();
+        if meta_str.len() > 4096 {
+            return Err(ApiError::BadRequest("metadata exceeds 4KB limit".into()));
+        }
+    }
+
     // 1. Decode graph
     let matrix = graph6::decode(&req.graph6)
         .map_err(|e| ApiError::BadRequest(format!("invalid graph6: {e}")))?;

@@ -39,6 +39,18 @@ pub fn create_router(state: AppState) -> Router {
             "/leaderboards/{n}/graphs",
             axum::routing::get(handlers::leaderboard::get_graphs),
         )
+        .route(
+            "/leaderboards/{n}/history",
+            axum::routing::get(handlers::history::get_history),
+        )
+        .route(
+            "/leaderboards/{n}/export",
+            axum::routing::get(handlers::history::export_graph6),
+        )
+        .route(
+            "/leaderboards/{n}/export/csv",
+            axum::routing::get(handlers::history::export_csv),
+        )
         // Submissions
         .route(
             "/submit",

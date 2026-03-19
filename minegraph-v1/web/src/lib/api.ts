@@ -101,12 +101,44 @@ export interface WorkerStats {
 
 // ── API functions ───────────────────────────────────────────
 
+export interface HistorySnapshot {
+	t: string;
+	count: number;
+	best_gap: number | null;
+	worst_gap: number | null;
+	median_gap: number | null;
+	avg_gap: number | null;
+	best_aut: number | null;
+	avg_aut: number | null;
+}
+
+export interface IdentityDetail {
+	key_id: string;
+	public_key: string;
+	display_name: string | null;
+	github_repo: string | null;
+	created_at: string;
+}
+
 export async function getHealth(): Promise<HealthResponse> {
 	return get('/health');
 }
 
 export async function getWorkers(): Promise<{ workers: WorkerInfo[] }> {
 	return get('/workers');
+}
+
+export async function getHistory(n: number, since?: string): Promise<{ snapshots: HistorySnapshot[] }> {
+	const params = since ? `?since=${encodeURIComponent(since)}` : '';
+	return get(`/leaderboards/${n}/history${params}`);
+}
+
+export async function getIdentity(keyId: string): Promise<IdentityDetail> {
+	return get(`/keys/${keyId}`);
+}
+
+export async function getIdentitySubmissions(keyId: string, limit = 50): Promise<{ submissions: any[] }> {
+	return get(`/keys/${keyId}/submissions?limit=${limit}`);
 }
 
 export async function getLeaderboards(): Promise<{ leaderboards: LeaderboardSummary[] }> {

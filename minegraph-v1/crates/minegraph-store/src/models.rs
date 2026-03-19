@@ -85,6 +85,25 @@ pub struct LeaderboardRichEntry {
     pub admitted_at: DateTime<Utc>,
 }
 
+/// A leaderboard score snapshot for history tracking.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LeaderboardSnapshot {
+    pub id: i64,
+    pub n: i32,
+    pub entry_count: i32,
+    pub best_gap: Option<f64>,
+    pub worst_gap: Option<f64>,
+    pub median_gap: Option<f64>,
+    pub avg_gap: Option<f64>,
+    pub best_aut: Option<f64>,
+    pub avg_aut: Option<f64>,
+    pub total_k4_red: Option<i64>,
+    pub total_k4_blue: Option<i64>,
+    pub total_k5_red: Option<i64>,
+    pub total_k5_blue: Option<i64>,
+    pub snapshot_at: DateTime<Utc>,
+}
+
 /// A verification receipt signed by the server.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Receipt {

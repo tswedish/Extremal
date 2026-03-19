@@ -48,6 +48,7 @@ pub async fn list_workers(State(state): State<AppState>) -> Json<Value> {
                 "strategy": w.strategy,
                 "n": w.n,
                 "stats": w.stats,
+                "metadata": w.metadata,
                 "last_seen": w.last_seen.to_rfc3339(),
                 "stale": false,
             })
@@ -65,6 +66,7 @@ pub async fn list_workers(State(state): State<AppState>) -> Json<Value> {
                 "strategy": w.strategy,
                 "n": w.n,
                 "stats": w.stats,
+                "metadata": w.metadata,
                 "last_seen": w.last_seen.to_rfc3339(),
                 "stale": true,
             })

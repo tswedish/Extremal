@@ -53,6 +53,8 @@ pub struct WorkerHeartbeat {
     pub strategy: String,
     pub n: u32,
     pub stats: WorkerStats,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
     pub last_seen: chrono::DateTime<chrono::Utc>,
 }
 

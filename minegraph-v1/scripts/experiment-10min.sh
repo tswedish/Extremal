@@ -95,6 +95,8 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
+COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
 # Launch workers with noise flips for diversity
 for i in 1 2 3 4; do
     NO_COLOR=1 RUST_LOG=info "$WORKER_BIN" \
@@ -105,7 +107,7 @@ for i in 1 2 3 4; do
         --sample-bias 0.8 \
         --max-iters 100000 \
         --noise-flips 3 \
-        --worker-id "exp10-$i" \
+        --metadata "{\"worker_id\":\"exp10-$i\",\"commit_hash\":\"$COMMIT_HASH\"}" \
         > "$LOG_DIR/worker-$i.log" 2>&1 &
     PIDS+=($!)
     echo "  Started worker $i (PID ${PIDS[-1]})"

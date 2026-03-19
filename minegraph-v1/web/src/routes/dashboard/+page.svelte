@@ -18,6 +18,7 @@
 		};
 		last_seen: string;
 		stale: boolean;
+		metadata?: Record<string, any>;
 	}
 
 	let workers = $state<WorkerInfo[]>([]);
@@ -164,6 +165,18 @@
 							<span class="ws-value mono">{formatRate(w.stats.total_discoveries, w.stats.uptime_secs)}</span>
 						</div>
 					</div>
+					{#if w.metadata && Object.keys(w.metadata).length > 0}
+						<div class="worker-metadata">
+							{#each Object.entries(w.metadata) as [k, v]}
+								{#if k !== 'worker_id'}
+									<span class="meta-tag" title="{k}: {v}">
+										<span class="meta-key">{k}</span>
+										<span class="meta-val">{v}</span>
+									</span>
+								{/if}
+							{/each}
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -254,6 +267,19 @@
 	.ws-row { display: flex; justify-content: space-between; font-size: 0.8rem; }
 	.ws-label { color: var(--color-text-muted); }
 	.ws-value { font-size: 0.8rem; }
+
+	.worker-metadata {
+		display: flex; flex-wrap: wrap; gap: 0.3rem;
+		margin-top: 0.5rem; padding-top: 0.5rem;
+		border-top: 1px solid var(--color-border);
+	}
+	.meta-tag {
+		display: inline-flex; align-items: center; gap: 0.2rem;
+		background: var(--color-bg); border-radius: 0.25rem;
+		padding: 0.1rem 0.4rem; font-size: 0.65rem;
+	}
+	.meta-key { color: var(--color-text-dim); }
+	.meta-val { color: var(--color-text-muted); font-family: var(--font-mono); }
 
 	.admissions-section { margin-top: 2rem; }
 	.admission-list { display: flex; flex-direction: column; gap: 0.25rem; }

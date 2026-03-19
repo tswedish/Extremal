@@ -86,6 +86,9 @@ cleanup() {
 }
 trap cleanup INT TERM
 
+COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+echo "Commit:      $COMMIT_HASH"
+
 for i in $(seq 1 "$WORKERS"); do
     LOG_FILE="$LOG_DIR/worker-$i.log"
     echo "Starting worker $i -> $LOG_FILE"
@@ -98,7 +101,7 @@ for i in $(seq 1 "$WORKERS"); do
         --max-depth "$MAX_DEPTH" \
         --sample-bias "$SAMPLE_BIAS" \
         --max-iters "$MAX_ITERS" \
-        --worker-id "fleet-$i" \
+        --metadata "{\"worker_id\":\"fleet-$i\",\"commit_hash\":\"$COMMIT_HASH\"}" \
         > "$LOG_FILE" 2>&1 &
     PIDS+=($!)
 done

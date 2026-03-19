@@ -96,6 +96,29 @@ async fn main() -> anyhow::Result<()> {
         workers: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
+    // Background task: snapshot leaderboard stats every 10 minutes
+    let snapshot_store = state.store.clone();
+    tokio::spawn(async move {
+        let interval = std::time::Duration::from_secs(600); // 10 minutes
+        loop {
+            tokio::time::sleep(interval).await;
+            // Snapshot all active leaderboards
+            match snapshot_store.list_leaderboard_ns().await {
+                Ok(boards) => {
+                    for board in &boards {
+                        if let Err(e) = snapshot_store.capture_snapshot(board.n).await {
+                            tracing::warn!(n = board.n, "snapshot failed: {e}");
+                        }
+                    }
+                    if !boards.is_empty() {
+                        tracing::debug!(count = boards.len(), "leaderboard snapshots captured");
+                    }
+                }
+                Err(e) => tracing::warn!("snapshot task failed: {e}"),
+            }
+        }
+    });
+
     // Build router
     let app = minegraph_server::create_router(state);
 

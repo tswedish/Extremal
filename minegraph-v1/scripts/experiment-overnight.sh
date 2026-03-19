@@ -125,9 +125,12 @@ REOF
 }
 trap cleanup INT TERM EXIT
 
+COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+echo "Commit: $COMMIT_HASH"
+
 # Launch workers: mix of strategies
-# Workers 1-4: default (leaderboard seeding)
-# Workers 5-8: with noise flips (exploration)
+# Workers 1-N/2: default (leaderboard seeding)
+# Workers N/2+1-N: with noise flips (exploration)
 for i in $(seq 1 "$WORKERS"); do
     NOISE=0
     if [[ $i -gt $((WORKERS / 2)) ]]; then NOISE=5; fi
@@ -140,7 +143,7 @@ for i in $(seq 1 "$WORKERS"); do
         --sample-bias 0.8 \
         --max-iters 100000 \
         --noise-flips "$NOISE" \
-        --worker-id "overnight-$i" \
+        --metadata "{\"worker_id\":\"overnight-$i\",\"commit_hash\":\"$COMMIT_HASH\",\"noise_flips\":$NOISE}" \
         > "$LOG_DIR/worker-$i.log" 2>&1 &
     PIDS+=($!)
     echo "  Started worker $i (noise=$NOISE, PID ${PIDS[-1]})"
@@ -166,7 +169,7 @@ while [[ $ELAPSED -lt $DURATION_SECS ]]; do
     # Check if workers are still alive
     ALIVE=0
     for pid in "${PIDS[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then ((ALIVE++)); fi
+        if kill -0 "$pid" 2>/dev/null; then ALIVE=$((ALIVE + 1)); fi
     done
 
     COUNT=$(curl -s http://localhost:3001/api/leaderboards/25/threshold 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('count','?'))" 2>/dev/null || echo "?")

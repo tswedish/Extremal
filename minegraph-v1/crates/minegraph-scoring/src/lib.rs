@@ -12,3 +12,6 @@ pub mod clique;
 pub mod goodman;
 pub mod histogram;
 pub mod score;
+
+#[cfg(test)]
+mod tests;
