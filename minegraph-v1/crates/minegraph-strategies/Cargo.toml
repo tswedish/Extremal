@@ -11,3 +11,7 @@ minegraph-scoring = { path = "../minegraph-scoring" }
 minegraph-worker-api = { path = "../minegraph-worker-api" }
 rand = { workspace = true }
 tracing = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

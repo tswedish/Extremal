@@ -1369,6 +1369,7 @@ dependencies = [
  "minegraph-types",
  "minegraph-worker-api",
  "rand 0.8.5",
+ "serde_json",
  "tracing",
 ]
 
@@ -1392,6 +1393,7 @@ dependencies = [
  "minegraph-types",
  "minegraph-worker-api",
  "minegraph-worker-core",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1411,11 +1413,14 @@ dependencies = [
 name = "minegraph-worker-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "minegraph-graph",
  "minegraph-identity",
  "minegraph-scoring",
+ "minegraph-strategies",
  "minegraph-types",
  "minegraph-worker-api",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",

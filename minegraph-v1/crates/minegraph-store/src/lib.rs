@@ -218,7 +218,7 @@ impl Store {
     ) -> Result<Vec<LeaderboardEntry>, StoreError> {
         let rows = sqlx::query_as::<_, LeaderboardEntry>(
             "SELECT * FROM leaderboard WHERE n = $1
-             ORDER BY rank ASC LIMIT $2 OFFSET $3",
+             ORDER BY score_bytes ASC LIMIT $2 OFFSET $3",
         )
         .bind(n)
         .bind(limit)
@@ -264,11 +264,8 @@ impl Store {
     /// Try to admit a graph to the leaderboard. Returns the new rank if admitted,
     /// or None if the graph didn't make the cut.
     ///
-    /// This performs the full admit-and-rerank in a single transaction:
-    /// 1. Check if CID already on leaderboard for this n
-    /// 2. If capacity not reached, insert
-    /// 3. If capacity reached, check if score beats the worst entry
-    /// 4. Recompute ranks
+    /// Lightweight admission: insert + count better entries for rank.
+    /// No full-table rerank — O(1) per admission instead of O(capacity).
     pub async fn try_admit(
         &self,
         n: i32,
@@ -289,7 +286,7 @@ impl Store {
 
         if existing.is_some() {
             tx.commit().await?;
-            return Ok(None); // Already on leaderboard
+            return Ok(None);
         }
 
         // Count current entries
@@ -311,7 +308,7 @@ impl Store {
             if let Some((worst_score, worst_cid)) = worst {
                 if score_bytes >= worst_score.as_slice() {
                     tx.commit().await?;
-                    return Ok(None); // Doesn't beat the worst
+                    return Ok(None);
                 }
                 // Evict the worst
                 sqlx::query("DELETE FROM leaderboard WHERE n = $1 AND cid = $2")
@@ -322,38 +319,28 @@ impl Store {
             }
         }
 
-        // Insert new entry with temporary rank
+        // Compute rank: count how many entries have a strictly better (lower) score
+        let (better_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM leaderboard WHERE n = $1 AND score_bytes < $2")
+                .bind(n)
+                .bind(score_bytes)
+                .fetch_one(&mut *tx)
+                .await?;
+        let new_rank = (better_count + 1) as i32;
+
+        // Insert with computed rank
         sqlx::query(
-            "INSERT INTO leaderboard (n, rank, cid, key_id, score_bytes)
-             VALUES ($1, 0, $2, $3, $4)",
+            "INSERT INTO leaderboard (n, cid, key_id, score_bytes, rank)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (n, cid) DO NOTHING",
         )
         .bind(n)
         .bind(cid)
         .bind(key_id)
         .bind(score_bytes)
+        .bind(new_rank)
         .execute(&mut *tx)
         .await?;
-
-        // Recompute all ranks for this n (sort by score_bytes ascending)
-        sqlx::query(
-            "WITH ranked AS (
-                SELECT cid, ROW_NUMBER() OVER (ORDER BY score_bytes ASC) as new_rank
-                FROM leaderboard WHERE n = $1
-            )
-            UPDATE leaderboard SET rank = ranked.new_rank::int
-            FROM ranked WHERE leaderboard.n = $1 AND leaderboard.cid = ranked.cid",
-        )
-        .bind(n)
-        .execute(&mut *tx)
-        .await?;
-
-        // Get the new rank for our entry
-        let (new_rank,): (i32,) =
-            sqlx::query_as("SELECT rank FROM leaderboard WHERE n = $1 AND cid = $2")
-                .bind(n)
-                .bind(cid)
-                .fetch_one(&mut *tx)
-                .await?;
 
         tx.commit().await?;
         Ok(Some(new_rank))
@@ -375,7 +362,7 @@ impl Store {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as("SELECT cid FROM leaderboard WHERE n = $1 ORDER BY rank")
+            sqlx::query_as("SELECT cid FROM leaderboard WHERE n = $1 ORDER BY score_bytes")
                 .bind(n)
                 .fetch_all(&self.pool)
                 .await?
@@ -395,7 +382,7 @@ impl Store {
              FROM leaderboard l
              JOIN graphs g ON l.cid = g.cid
              WHERE l.n = $1
-             ORDER BY l.rank ASC
+             ORDER BY l.score_bytes ASC
              LIMIT $2 OFFSET $3",
         )
         .bind(n)

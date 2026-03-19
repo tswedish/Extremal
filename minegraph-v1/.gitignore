@@ -8,3 +8,4 @@ logs/
 node_modules/
 web/packages/*/build/
 web/packages/*/.svelte-kit/
+migrations/
