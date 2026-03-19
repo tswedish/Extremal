@@ -36,6 +36,8 @@ pub struct EngineConfig {
     pub offline: bool,
     /// Noise flips to apply to seed graphs.
     pub noise_flips: u32,
+    /// Max submissions per round (batch size). 0 = unlimited.
+    pub max_submissions_per_round: usize,
     /// Worker metadata (commit hash, worker ID, etc.).
     pub metadata: Option<serde_json::Value>,
 }
@@ -101,12 +103,18 @@ pub async fn run_engine(
 
     let mut known_cids: HashSet<GraphCid> = HashSet::new();
     let mut server_graphs: Vec<String> = Vec::new(); // graph6 strings from leaderboard
+    let mut submit_buffer: Vec<RawDiscovery> = Vec::new(); // pending submissions
     let mut round: u64 = 0;
     let mut total_discoveries: u64 = 0;
     let mut total_submitted: u64 = 0;
     let mut total_admitted: u64 = 0;
     let mut cid_sync_cursor: Option<String> = None;
     let mut rng = rand::rngs::SmallRng::from_entropy();
+    let batch_size = if config.max_submissions_per_round > 0 {
+        config.max_submissions_per_round
+    } else {
+        20 // sensible default
+    };
 
     loop {
         // Check shutdown
@@ -194,32 +202,55 @@ pub async fn run_engine(
             }
         };
 
-        // Collect all discoveries: from observer callbacks + result.best_graph
-        let mut discoveries_to_submit: Vec<RawDiscovery> = observer.drain();
-
-        // Also add the best valid graph if not already collected
+        // Collect raw discoveries from observer + best_graph
+        let mut raw_discoveries: Vec<RawDiscovery> = observer.drain();
         if let Some(ref best) = result.best_graph
             && result.valid
         {
-            let cid = minegraph_graph::compute_cid(best);
+            raw_discoveries.push(RawDiscovery {
+                graph: best.clone(),
+                iteration: result.iterations_used,
+            });
+        }
+
+        // Dedup by canonical CID (nauty is expensive, but we only do it
+        // on valid graphs and this prevents submitting thousands of
+        // isomorphic duplicates)
+        let mut discoveries_to_submit: Vec<RawDiscovery> = Vec::new();
+        for discovery in &raw_discoveries {
+            let (canonical, _) = minegraph_scoring::automorphism::canonical_form(&discovery.graph);
+            let cid = minegraph_graph::compute_cid(&canonical);
             if known_cids.insert(cid) {
-                discoveries_to_submit.push(RawDiscovery {
-                    graph: best.clone(),
-                    iteration: result.iterations_used,
-                });
+                discoveries_to_submit.push(discovery.clone());
             }
         }
 
-        total_discoveries += discoveries_to_submit.len() as u64;
+        let new_unique = discoveries_to_submit.len();
+        total_discoveries += new_unique as u64;
 
-        // ── Submit discoveries ──────────────────────────────
+        // Add new unique discoveries to the submission buffer
+        submit_buffer.extend(discoveries_to_submit);
+
+        if !raw_discoveries.is_empty() {
+            debug!(
+                raw = raw_discoveries.len(),
+                unique = new_unique,
+                buffered = submit_buffer.len(),
+                "discovery dedup"
+            );
+        }
+
+        // ── Submit a batch from the buffer ──────────────────
         let mut round_submitted = 0u64;
         let mut round_admitted = 0u64;
 
         if !config.offline
             && let Some(ref client) = client
         {
-            for discovery in &discoveries_to_submit {
+            let to_submit: Vec<_> = submit_buffer
+                .drain(..submit_buffer.len().min(batch_size))
+                .collect();
+            for discovery in &to_submit {
                 let g6 = graph6::encode(&discovery.graph);
                 match client.submit(config.n, &g6, config.metadata.as_ref()).await {
                     Ok(resp) => {
@@ -236,9 +267,21 @@ pub async fn run_engine(
                         }
                     }
                     Err(e) => {
-                        debug!("submit failed: {e}");
+                        warn!("submit failed: {e}");
+                        break; // stop submitting this round on failure
                     }
                 }
+            }
+
+            // Cap buffer size to prevent unbounded growth
+            if submit_buffer.len() > 1000 {
+                let excess = submit_buffer.len() - 500;
+                submit_buffer.drain(..excess);
+                debug!(
+                    trimmed = excess,
+                    remaining = submit_buffer.len(),
+                    "trimmed submit buffer"
+                );
             }
         }
 
@@ -249,9 +292,10 @@ pub async fn run_engine(
         info!(
             round,
             iters = result.iterations_used,
-            discoveries = discoveries_to_submit.len(),
+            new_unique,
             submitted = round_submitted,
             admitted = round_admitted,
+            buffered = submit_buffer.len(),
             valid = result.valid,
             ms = round_elapsed.as_millis() as u64,
             total_discoveries,

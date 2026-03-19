@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 minegraph-types = { path = "../minegraph-types" }
 minegraph-graph = { path = "../minegraph-graph" }
+nauty-Traces-sys = "0.11"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

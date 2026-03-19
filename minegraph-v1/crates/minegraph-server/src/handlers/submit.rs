@@ -65,17 +65,17 @@ pub async fn submit_graph(
         .await
         .map_err(|e| ApiError::Internal(format!("scoring task failed: {e}")))?;
 
-    let cid_hex = scored.cid.to_hex();
+    let cid_hex = scored.score.cid.to_hex();
 
-    // 5. Store graph + score
+    // 5. Store graph (canonical graph6) + score
     state
         .store
-        .store_graph(&cid_hex, req.n as i32, &req.graph6)
+        .store_graph(&cid_hex, req.n as i32, &scored.canonical_graph6)
         .await?;
 
-    let histogram_json = serde_json::to_value(&scored.histogram)
+    let histogram_json = serde_json::to_value(&scored.score.histogram)
         .map_err(|e| ApiError::Internal(format!("serialize histogram: {e}")))?;
-    let score_bytes = scored.to_score_bytes(max_k);
+    let score_bytes = scored.score.to_score_bytes(max_k);
 
     state
         .store
@@ -83,8 +83,8 @@ pub async fn submit_graph(
             &cid_hex,
             req.n as i32,
             &histogram_json,
-            scored.goodman_gap as f64,
-            scored.aut_order,
+            scored.score.goodman_gap as f64,
+            scored.score.aut_order,
             &score_bytes,
         )
         .await?;
@@ -115,8 +115,8 @@ pub async fn submit_graph(
 
     let score_json = json!({
         "histogram": histogram_json,
-        "goodman_gap": scored.goodman_gap,
-        "aut_order": scored.aut_order,
+        "goodman_gap": scored.score.goodman_gap,
+        "aut_order": scored.score.aut_order,
     });
 
     state
@@ -179,15 +179,16 @@ pub async fn verify_graph(
         .await
         .map_err(|e| ApiError::Internal(format!("scoring task failed: {e}")))?;
 
-    let histogram_json = serde_json::to_value(&scored.histogram)
+    let histogram_json = serde_json::to_value(&scored.score.histogram)
         .map_err(|e| ApiError::Internal(format!("serialize: {e}")))?;
 
     Ok(Json(json!({
-        "cid": scored.cid.to_hex(),
+        "cid": scored.score.cid.to_hex(),
         "n": req.n,
         "histogram": histogram_json,
-        "goodman_gap": scored.goodman_gap,
-        "aut_order": scored.aut_order,
+        "goodman_gap": scored.score.goodman_gap,
+        "aut_order": scored.score.aut_order,
+        "canonical_graph6": scored.canonical_graph6,
     })))
 }
 
@@ -231,19 +232,33 @@ pub async fn get_submission(
     })))
 }
 
+/// Result of scoring a graph, including canonical form.
+struct ScoredGraph {
+    score: GraphScore,
+    canonical_graph6: String,
+}
+
 /// Score a graph (CPU-intensive, runs in blocking task).
-fn score_graph(matrix: &AdjacencyMatrix, max_k: u32) -> GraphScore {
+///
+/// Performs canonical labeling via nauty, computes the clique histogram,
+/// Goodman gap, |Aut(G)|, and canonical CID. Returns the full score plus
+/// the canonical graph6 encoding for storage.
+fn score_graph(matrix: &AdjacencyMatrix, max_k: u32) -> ScoredGraph {
+    // Clique histogram (isomorphism-invariant, so use original graph)
     let histogram = CliqueHistogram::compute(matrix, max_k);
 
     let (red_tri, blue_tri) = histogram.tier(3).map(|t| (t.red, t.blue)).unwrap_or((0, 0));
     let gap = goodman::goodman_gap(matrix.n(), red_tri, blue_tri);
 
-    // TODO: canonical form via nauty + aut_order computation
-    // For now, use aut_order = 1.0 (no symmetry detection)
-    let aut_order = 1.0;
+    // Canonical form + |Aut(G)| via nauty (single call)
+    let (canonical, aut_order) = minegraph_scoring::automorphism::canonical_form(matrix);
 
-    // CID from the graph as-is (TODO: should be canonical form)
-    let cid = minegraph_graph::compute_cid(matrix);
+    // CID from canonical graph6
+    let canonical_g6 = minegraph_graph::graph6::encode(&canonical);
+    let cid = minegraph_graph::compute_cid(&canonical);
 
-    GraphScore::new(histogram, gap, aut_order, cid)
+    ScoredGraph {
+        score: GraphScore::new(histogram, gap, aut_order, cid),
+        canonical_graph6: canonical_g6,
+    }
 }

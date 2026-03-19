@@ -63,6 +63,10 @@ struct Cli {
     #[arg(long, default_value = "0")]
     noise_flips: u32,
 
+    /// Max submissions per round (0 = unlimited).
+    #[arg(long, default_value = "20")]
+    max_submissions_per_round: usize,
+
     /// Run without server (local search only).
     #[arg(long)]
     offline: bool,
@@ -163,6 +167,7 @@ async fn main() {
         max_known_cids: cli.max_known_cids,
         offline: cli.offline,
         noise_flips: cli.noise_flips,
+        max_submissions_per_round: cli.max_submissions_per_round,
         metadata,
     };
 

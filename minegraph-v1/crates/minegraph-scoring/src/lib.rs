@@ -7,6 +7,7 @@
 //! - Automorphism group size tiebreaker (higher is better)
 //! - CID tiebreaker (lower is better)
 
+pub mod automorphism;
 pub mod clique;
 pub mod goodman;
 pub mod histogram;

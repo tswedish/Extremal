@@ -24,7 +24,8 @@ use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 
-use minegraph_graph::{AdjacencyMatrix, compute_cid};
+use minegraph_graph::AdjacencyMatrix;
+use minegraph_scoring::automorphism::canonical_form;
 use minegraph_scoring::clique::{
     NeighborSet, count_cliques, fast_fingerprint, guilty_edges, violation_delta,
 };
@@ -204,7 +205,8 @@ impl SearchStrategy for Tree2Search {
 
         // Check if seed is already valid
         if seed_entry.violations == 0 {
-            let cid = compute_cid(&seed_entry.graph);
+            let (canonical, _) = canonical_form(&seed_entry.graph);
+            let cid = minegraph_graph::compute_cid(&canonical);
             if known_cids.insert(cid) {
                 observer.on_discovery(&RawDiscovery {
                     graph: seed_entry.graph.clone(),
@@ -313,7 +315,9 @@ impl SearchStrategy for Tree2Search {
                         let actual_ei = count_cliques(&comp_n, ell, n);
 
                         if actual_kc + actual_ei == 0 {
-                            let cid = compute_cid(&valid_graph);
+                            // Canonical CID for dedup (nauty call — only on valid graphs)
+                            let (canonical, _) = canonical_form(&valid_graph);
+                            let cid = minegraph_graph::compute_cid(&canonical);
                             if known_cids.insert(cid) {
                                 observer.on_discovery(&RawDiscovery {
                                     graph: valid_graph.clone(),
