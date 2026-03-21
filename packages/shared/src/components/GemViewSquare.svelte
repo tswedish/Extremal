@@ -28,6 +28,7 @@
 	let canvas = $state<HTMLCanvasElement | null>(null);
 	const matrix = $derived(decodeGraph6(graph6));
 
+	// ── Hash derivation (same as GemView) ─────────────
 	function cidToHue(cid: string): number {
 		if (cid.length < 6) return 0.55;
 		return (parseInt(cid.slice(0, 6), 16) % 100000) / 100000;
@@ -44,6 +45,7 @@
 		return (h % 100000) / 100000;
 	}
 
+	// ── Color helpers (same as GemView) ───────────────
 	function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 		h = ((h % 1) + 1) % 1;
 		const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -70,6 +72,7 @@
 		return hues;
 	}
 
+	// ── Render (diamond rotation, same as GemView) ────
 	$effect(() => {
 		if (!canvas || !matrix || matrix.length === 0) return;
 		const nn = matrix.length;
@@ -96,25 +99,35 @@
 		const waveDx = Math.cos(waveAngle);
 		const waveDy = Math.sin(waveAngle);
 
+		let maxDiff = 0;
+		// No histogram prop on this component, use 0
+		const hueNoise = Math.min(0.5, maxDiff * 0.10);
+
 		function cellHash(i: number, j: number): number {
 			const v = ((i * 2654435761) ^ (j * 2246822519)) >>> 0;
 			return (v / 4294967296) - 0.5;
 		}
 
-		// Square grid: cells fill the entire canvas
-		const cell = W / nn;
+		// Diamond grid (same as GemView)
+		const gridW = 2 * nn - 1;
+		const margin = W * 0.03;
+		const cell = (W - 2 * margin) / gridW;
 
 		const nonEdgeRgb = hslToRgb(baseHue + 0.5, 0.10, 0.08);
 		const bgStr = '#08080e';
 		const spineStr = rgb(hslToRgb(baseHue, 0.25, 0.18));
+		const outlineStr = rgb(hslToRgb(baseHue, 0.40, 0.25));
 
 		ctx.fillStyle = bgStr;
 		ctx.fillRect(0, 0, W, W);
 
 		for (let i = 0; i < nn; i++) {
 			for (let j = 0; j < nn; j++) {
-				const px = j * cell;
-				const py = i * cell;
+				// Diamond rotation: (i,j) -> rotated grid coordinates
+				const gx = j - i + (nn - 1);
+				const gy = i + j;
+				const px = margin + gx * cell;
+				const py = margin + gy * cell;
 
 				if (i === j) {
 					ctx.fillStyle = spineStr;
@@ -124,11 +137,11 @@
 					const diag = (i + j) / (2 * (nn - 1));
 					const hueIdx = Math.floor(diag * hues.length * 0.999);
 					const h = hues[Math.min(hueIdx, hues.length - 1)];
-					const drift = cellHash(i, j) * 0.1;
+					const drift = cellHash(i, j) * hueNoise;
 					const finalHue = h + drift;
 
-					const normX = j / (nn - 1);
-					const normY = i / (nn - 1);
+					const normX = gx / (gridW - 1);
+					const normY = gy / (gridW - 1);
 					const proj = normX * waveDx + normY * waveDy;
 					const wave = Math.sin(proj * waveFreq * Math.PI * 2);
 					const lightness = 0.55 + wave * waveAmp;
@@ -139,6 +152,29 @@
 				ctx.fillRect(px, py, cell + 0.5, cell + 0.5);
 			}
 		}
+
+		// Diamond outline
+		const topX = margin + (nn - 1) * cell + cell / 2, topY = margin;
+		const rightX = margin + gridW * cell, rightY = margin + (nn - 1) * cell + cell / 2;
+		const bottomX = topX, bottomY = margin + gridW * cell;
+		const leftX = margin, leftY = rightY;
+
+		ctx.strokeStyle = outlineStr;
+		ctx.lineWidth = Math.max(1, W / 200);
+		ctx.beginPath();
+		ctx.moveTo(topX, topY);
+		ctx.lineTo(rightX, rightY);
+		ctx.lineTo(bottomX, bottomY);
+		ctx.lineTo(leftX, leftY);
+		ctx.closePath();
+		ctx.stroke();
+
+		// Spine
+		ctx.lineWidth = Math.max(0.5, W / 400);
+		ctx.beginPath();
+		ctx.moveTo(topX, topY);
+		ctx.lineTo(bottomX, bottomY);
+		ctx.stroke();
 	});
 </script>
 
@@ -163,7 +199,7 @@
 	}
 	.gem-square canvas {
 		display: block;
-		border-radius: 2px;
+		border-radius: 3px;
 	}
 	.gem-square.clickable {
 		cursor: pointer;
@@ -172,11 +208,11 @@
 		filter: brightness(1.15);
 	}
 	.gem-square.glowing {
-		animation: gem-glow 1s ease-out;
+		animation: gem-glow 1.5s ease-out;
 	}
 	.gem-square.invalid {
 		border: 1px solid rgba(239, 68, 68, 0.4);
-		border-radius: 2px;
+		border-radius: 3px;
 	}
 	@keyframes gem-glow {
 		0% { box-shadow: 0 0 12px rgba(99, 102, 241, 0.8), 0 0 24px rgba(168, 85, 247, 0.4); }

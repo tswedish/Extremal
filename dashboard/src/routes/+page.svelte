@@ -123,7 +123,7 @@
 						<!-- Current search gem -->
 						{#if w.currentGraph6}
 							<div class="current-gem">
-								<GemViewSquare graph6={w.currentGraph6} n={w.n} size={48} invalid={w.violationScore > 0} />
+								<GemViewSquare graph6={w.currentGraph6} n={w.n} size={80} invalid={w.violationScore > 0} />
 							</div>
 						{/if}
 					</div>

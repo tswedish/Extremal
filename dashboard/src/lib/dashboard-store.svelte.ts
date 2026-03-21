@@ -80,7 +80,7 @@ class DashboardStore {
 	connected = $state(false);
 	workers = $state<Map<string, WorkerState>>(new Map());
 	mode = $state<'monitor' | 'rain'>('monitor');
-	gemScale = $state(60);
+	gemScale = $state(100);
 	fadeDuration = $state(120);
 	maxGemsPerColumn = $state(MAX_GEMS_PER_WORKER);
 	showInfo = $state(true);

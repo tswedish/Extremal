@@ -352,45 +352,27 @@ pub async fn run_engine(
         let mut round_skipped_dup: u64 = 0;
         let mut round_skipped_server: u64 = 0;
         let mut round_skipped_threshold: u64 = 0;
+        let mut local_pool_cids: HashSet<GraphCid> = HashSet::new();
+
         for discovery in &raw_discoveries {
             // Canonical form + aut_order
             let (canonical, aut_order) = canonical_form(&discovery.graph);
             let canonical_g6 = graph6::encode(&canonical);
             let cid = minegraph_graph::compute_cid(&canonical);
 
-            // Dedup: skip if already in our submit pipeline or previously submitted
-            if known_cids.contains(&cid) {
-                round_skipped_dup += 1;
-                continue;
-            }
-
-            // Skip if server already has it
-            if server_cids.contains(&cid) {
-                round_skipped_server += 1;
-                continue;
-            }
-
-            // Score locally
+            // Score locally (always, even for dupes — dashboard wants all unique discoveries)
             let histogram = CliqueHistogram::compute(&discovery.graph, max_k);
             let (red_tri, blue_tri) = histogram.tier(3).map(|t| (t.red, t.blue)).unwrap_or((0, 0));
             let gap = goodman::goodman_gap(config.n, red_tri, blue_tri);
             let score = GraphScore::new(histogram, gap, aut_order, cid);
             let score_bytes = score.to_score_bytes(max_k);
 
-            // Threshold gate: ONLY when leaderboard is full
-            if leaderboard_full
-                && let Some(ref threshold) = threshold_score_bytes
-                && score_bytes.as_slice() >= threshold.as_slice()
+            // Send ALL unique scored discoveries to dashboard (for local pool visualization)
+            // This feeds the rain column regardless of server dedup/threshold
+            if let Some(ref dash) = dashboard
+                && !local_pool_cids.contains(&cid)
             {
-                round_skipped_threshold += 1;
-                continue;
-            }
-
-            // Passed all filters — mark as known and queue for submission
-            known_cids.insert(cid);
-
-            // Send scored discovery to dashboard
-            if let Some(ref dash) = dashboard {
+                local_pool_cids.insert(cid);
                 dash.send(WorkerMessage::Discovery {
                     graph6: canonical_g6.clone(),
                     cid: cid.to_hex(),
@@ -406,6 +388,29 @@ pub async fn run_engine(
                     iteration: discovery.iteration,
                 });
             }
+
+            // Dedup for server submission pipeline
+            if known_cids.contains(&cid) {
+                round_skipped_dup += 1;
+                continue;
+            }
+
+            if server_cids.contains(&cid) {
+                round_skipped_server += 1;
+                continue;
+            }
+
+            // Threshold gate: ONLY when leaderboard is full
+            if leaderboard_full
+                && let Some(ref threshold) = threshold_score_bytes
+                && score_bytes.as_slice() >= threshold.as_slice()
+            {
+                round_skipped_threshold += 1;
+                continue;
+            }
+
+            // Passed submission filters — mark as known and queue
+            known_cids.insert(cid);
 
             new_scored.push(ScoredDiscovery {
                 graph: discovery.graph.clone(),
