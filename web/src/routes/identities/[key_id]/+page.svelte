@@ -5,6 +5,22 @@
 
 	const keyId = $derived($page.params.key_id);
 
+	interface LeaderboardEntry {
+		n: number;
+		rank: number;
+		cid: string;
+		graph6: string;
+		goodman_gap: number | null;
+		aut_order: number | null;
+	}
+
+	interface LeaderboardSummary {
+		total_entries: number;
+		n_values: number[];
+		best_rank: number | null;
+		avg_rank: number | null;
+	}
+
 	interface IdentityData {
 		key_id: string;
 		public_key: string;
@@ -12,14 +28,8 @@
 		github_repo: string | null;
 		created_at: string;
 		total_submissions: number;
-		leaderboard_entries: {
-			n: number;
-			rank: number;
-			cid: string;
-			graph6: string;
-			goodman_gap: number | null;
-			aut_order: number | null;
-		}[];
+		leaderboard_entries: LeaderboardEntry[];
+		leaderboard_summary: LeaderboardSummary;
 	}
 
 	let identity = $state<IdentityData | null>(null);
@@ -69,14 +79,40 @@
 			{/if}
 			<dt>Registered</dt><dd class="dm">{new Date(identity.created_at).toLocaleString()}</dd>
 			<dt>Total Submissions</dt><dd>{identity.total_submissions.toLocaleString()}</dd>
-			<dt>On Leaderboards</dt><dd>{identity.leaderboard_entries.length} entries</dd>
+			<dt>On Leaderboards</dt><dd>{identity.leaderboard_summary.total_entries} entries across {new Set(identity.leaderboard_summary.n_values).size} n-values</dd>
 		</dl>
 	</div>
 
-	<!-- Leaderboard presence with gems -->
-	{#if identity.leaderboard_entries.length > 0}
+	<!-- Leaderboard summary + top entries -->
+	{#if identity.leaderboard_summary.total_entries > 0}
 		<section class="lb-section">
-			<h2>Leaderboard Entries</h2>
+			<h2>Leaderboard Summary</h2>
+			<div class="lb-summary card">
+				<div class="summary-stats">
+					<div class="stat">
+						<span class="stat-value">{identity.leaderboard_summary.total_entries}</span>
+						<span class="stat-label">entries</span>
+					</div>
+					<div class="stat">
+						<span class="stat-value">{new Set(identity.leaderboard_summary.n_values).size}</span>
+						<span class="stat-label">n-values</span>
+					</div>
+					{#if identity.leaderboard_summary.best_rank !== null}
+						<div class="stat">
+							<span class="stat-value">#{identity.leaderboard_summary.best_rank}</span>
+							<span class="stat-label">best rank</span>
+						</div>
+					{/if}
+					{#if identity.leaderboard_summary.avg_rank !== null}
+						<div class="stat">
+							<span class="stat-value">#{identity.leaderboard_summary.avg_rank.toFixed(1)}</span>
+							<span class="stat-label">avg rank</span>
+						</div>
+					{/if}
+				</div>
+			</div>
+
+			<h2>Top Entries{#if identity.leaderboard_summary.total_entries > identity.leaderboard_entries.length} (showing {identity.leaderboard_entries.length} of {identity.leaderboard_summary.total_entries}){/if}</h2>
 			<div class="lb-grid">
 				{#each identity.leaderboard_entries as entry}
 					<a href="/submissions/{entry.cid}" class="lb-entry card">
@@ -140,6 +176,12 @@
 		color: var(--color-text-dim); cursor: pointer; font-family: var(--font-mono);
 	}
 	.copy-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+	.lb-summary { margin-bottom: 1rem; }
+	.summary-stats { display: flex; gap: 1.5rem; justify-content: center; padding: 0.5rem 0; }
+	.stat { display: flex; flex-direction: column; align-items: center; gap: 0.1rem; }
+	.stat-value { font-family: var(--font-mono); font-weight: 700; font-size: 1.1rem; color: var(--color-accent); }
+	.stat-label { font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase; }
 
 	.lb-section { margin-bottom: 2rem; }
 	.lb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; }

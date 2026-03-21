@@ -44,10 +44,21 @@ pub async fn register_key(
     })))
 }
 
+#[derive(Deserialize)]
+pub struct GetKeyParams {
+    #[serde(default = "default_lb_limit")]
+    pub leaderboard_limit: usize,
+}
+
+fn default_lb_limit() -> usize {
+    10
+}
+
 /// GET /api/keys/:key_id — look up identity.
 pub async fn get_key(
     State(state): State<AppState>,
     Path(key_id): Path<String>,
+    Query(params): Query<GetKeyParams>,
 ) -> Result<Json<Value>, ApiError> {
     let identity = state
         .store
@@ -61,8 +72,23 @@ pub async fn get_key(
         .get_identity_leaderboard_entries(&key_id)
         .await?;
 
-    let lb_json: Vec<Value> = lb_entries
+    let total_leaderboard_entries = lb_entries.len();
+
+    // Summary stats across all entries
+    let n_values: Vec<i32> = lb_entries.iter().map(|e| e.n).collect();
+    let best_rank = lb_entries.iter().map(|e| e.rank).min();
+    let avg_rank = if !lb_entries.is_empty() {
+        Some(lb_entries.iter().map(|e| e.rank as f64).sum::<f64>() / lb_entries.len() as f64)
+    } else {
+        None
+    };
+
+    // Return only top entries (sorted by rank across all n values)
+    let mut sorted = lb_entries;
+    sorted.sort_by_key(|e| e.rank);
+    let top_entries: Vec<Value> = sorted
         .iter()
+        .take(params.leaderboard_limit)
         .map(|e| {
             json!({
                 "n": e.n,
@@ -82,7 +108,13 @@ pub async fn get_key(
         "github_repo": identity.github_repo,
         "created_at": identity.created_at.to_rfc3339(),
         "total_submissions": sub_count,
-        "leaderboard_entries": lb_json,
+        "leaderboard_entries": top_entries,
+        "leaderboard_summary": {
+            "total_entries": total_leaderboard_entries,
+            "n_values": n_values,
+            "best_rank": best_rank,
+            "avg_rank": avg_rank,
+        },
     })))
 }
 
