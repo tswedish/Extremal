@@ -138,9 +138,9 @@ All 12 backend crates implemented and working end-to-end. 82 tests passing.
 - **Shared components** (`packages/shared/`) — GemView (diamond adjacency matrix), GemViewSquare (rain variant), GemPopup (detail modal), graph6 decoder
 
 ### TODO
-1. Evo strategy port
+1. New search strategy — explore alternatives competitive with tree2 (research first, then implement)
 2. Production hardening (rate limiting, connection pool tuning)
-3. Column drag reorder in rain mode
+3. Deploy on Google Cloud Run + Cloud SQL
 
 ## Key Design Decisions
 
