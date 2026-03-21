@@ -442,8 +442,9 @@ pub async fn run_engine(
         total_skipped_server += round_skipped_server;
         total_skipped_threshold += round_skipped_threshold;
 
-        // Add to submit buffer
+        // Add to submit buffer and sort by score (best first)
         submit_buffer.extend(new_scored);
+        submit_buffer.sort_by(|a, b| a.score.cmp(&b.score));
 
         // ── Submit a batch from the buffer ──────────────────
         let mut round_submitted = 0u64;
