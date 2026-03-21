@@ -63,6 +63,12 @@ case "$cmd" in
     web-check)
         cd web && npm run check
         ;;
+    dashboard)
+        cargo run $RELEASE -p minegraph-dashboard -- "${EXTRA_ARGS[@]}"
+        ;;
+    dashboard-ui)
+        cd dashboard && npm run dev
+        ;;
     fleet)
         ./scripts/fleet.sh "${EXTRA_ARGS[@]}" $RELEASE
         ;;
@@ -94,9 +100,11 @@ Commands:
   server      Start API server
   worker      Start search worker
   cli         Run minegraph CLI
+  dashboard   Start dashboard relay server on :4000
+  dashboard-ui Dashboard SvelteKit dev server on :5174
   web-dev     SvelteKit dev server on :5173
   web-build   Build web app for production
-  fleet       Launch worker fleet (--workers N --n N)
+  fleet       Launch worker fleet (--workers N --n N --dashboard URL)
   stop-fleet  Kill all running workers
   migrate     Run database migrations
   help        Show this help

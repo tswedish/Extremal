@@ -93,7 +93,6 @@ async fn main() -> anyhow::Result<()> {
         leaderboard_capacity: config.leaderboard_capacity,
         max_k: config.max_k,
         events_tx,
-        workers: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     // Background task: snapshot leaderboard stats every 10 minutes

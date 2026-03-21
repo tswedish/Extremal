@@ -1,182 +1,96 @@
 <script lang="ts">
 	import { subscribeEvents, type ServerEvent } from '$lib/api';
 
-	interface WorkerInfo {
-		worker_id: string;
-		key_id: string;
-		strategy: string;
-		n: number;
-		stats: {
-			round: number;
-			total_discoveries: number;
-			total_submitted: number;
-			total_admitted: number;
-			buffered: number;
-			last_round_ms: number;
-			new_unique_last_round: number;
-			uptime_secs: number;
-		};
-		last_seen: string;
-		stale: boolean;
-		metadata?: Record<string, any>;
-	}
-
-	let workers = $state<WorkerInfo[]>([]);
 	let loading = $state(true);
-	let lastRefresh = $state('');
 	let recentAdmissions = $state<ServerEvent[]>([]);
+	let recentSubmissions = $state<ServerEvent[]>([]);
 	let admitsPerMinute = $state(0);
+	let submitsPerMinute = $state(0);
 	let admitTimestamps: number[] = [];
-
-	async function fetchWorkers() {
-		try {
-			const res = await fetch('/api/workers');
-			const data = await res.json();
-			workers = data.workers || [];
-			lastRefresh = new Date().toLocaleTimeString();
-		} catch { /* server offline */ }
-		loading = false;
-	}
+	let submitTimestamps: number[] = [];
+	let activeKeys = $state<Map<string, { lastSeen: number; n: number; submissions: number }>>(new Map());
 
 	$effect(() => {
-		fetchWorkers();
-		const interval = setInterval(fetchWorkers, 5000);
+		loading = false;
 
 		const unsub = subscribeEvents((event) => {
+			const now = Date.now();
+			const cutoff = now - 60000;
+
 			if (event.type === 'admission') {
 				recentAdmissions = [event, ...recentAdmissions.slice(0, 49)];
-				admitTimestamps.push(Date.now());
-				// Trim to last 60 seconds
-				const cutoff = Date.now() - 60000;
+				admitTimestamps.push(now);
 				admitTimestamps = admitTimestamps.filter(t => t > cutoff);
 				admitsPerMinute = admitTimestamps.length;
 			}
+
+			if (event.type === 'admission' || event.type === 'submission') {
+				submitTimestamps.push(now);
+				submitTimestamps = submitTimestamps.filter(t => t > cutoff);
+				submitsPerMinute = submitTimestamps.length;
+
+				if (event.type === 'submission') {
+					recentSubmissions = [event, ...recentSubmissions.slice(0, 49)];
+				}
+
+				// Track active keys (inferred worker activity)
+				if (event.key_id) {
+					const existing = activeKeys.get(event.key_id) || { lastSeen: 0, n: 0, submissions: 0 };
+					activeKeys.set(event.key_id, {
+						lastSeen: now,
+						n: event.n ?? existing.n,
+						submissions: existing.submissions + 1,
+					});
+					activeKeys = new Map(activeKeys);
+				}
+			}
 		});
 
-		return () => { clearInterval(interval); unsub(); };
+		return unsub;
 	});
 
-	function formatUptime(secs: number): string {
-		if (secs < 60) return `${secs}s`;
-		if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
-		const h = Math.floor(secs / 3600);
-		const m = Math.floor((secs % 3600) / 60);
-		return `${h}h ${m}m`;
-	}
-
-	function formatRate(discoveries: number, secs: number): string {
-		if (secs === 0) return '0';
-		const rate = discoveries / secs * 3600;
-		if (rate > 1000) return `${(rate / 1000).toFixed(1)}K/hr`;
-		return `${rate.toFixed(0)}/hr`;
-	}
-
-	const activeWorkers = $derived(workers.filter(w => !w.stale));
-	const totalDiscoveries = $derived(activeWorkers.reduce((s, w) => s + w.stats.total_discoveries, 0));
-	const totalAdmitted = $derived(activeWorkers.reduce((s, w) => s + w.stats.total_admitted, 0));
-	const totalSubmitted = $derived(activeWorkers.reduce((s, w) => s + w.stats.total_submitted, 0));
+	const activeKeysList = $derived(
+		Array.from(activeKeys.entries())
+			.filter(([_, v]) => Date.now() - v.lastSeen < 120000) // active in last 2 min
+			.sort((a, b) => b[1].submissions - a[1].submissions)
+	);
 </script>
 
-<h1>Worker Dashboard</h1>
+<h1>Activity Dashboard</h1>
+
+<p class="subtitle">Worker activity is inferred from submissions. For detailed worker monitoring, use the dedicated dashboard server.</p>
 
 <!-- Fleet summary -->
 <div class="summary-grid">
 	<div class="stat-card">
-		<div class="stat-value">{activeWorkers.length}</div>
-		<div class="stat-label">Active Workers</div>
+		<div class="stat-value">{activeKeysList.length}</div>
+		<div class="stat-label">Active Keys</div>
 	</div>
 	<div class="stat-card">
 		<div class="stat-value">{admitsPerMinute}</div>
 		<div class="stat-label">Admits/min</div>
 	</div>
 	<div class="stat-card">
-		<div class="stat-value">{totalAdmitted.toLocaleString()}</div>
-		<div class="stat-label">Total Admitted</div>
-	</div>
-	<div class="stat-card">
-		<div class="stat-value">{totalDiscoveries.toLocaleString()}</div>
-		<div class="stat-label">Total Discoveries</div>
+		<div class="stat-value">{submitsPerMinute}</div>
+		<div class="stat-label">Submits/min</div>
 	</div>
 </div>
 
-<!-- Worker table -->
-{#if loading}
-	<div class="shimmer" style="height: 200px; border-radius: 0.75rem; margin-top: 1.5rem;"></div>
-{:else if workers.length === 0}
-	<div class="card empty-state">
-		<p>No workers connected.</p>
-		<p class="dim">Start a worker fleet:</p>
-		<code>./scripts/fleet.sh --workers 4 --n 25 --release</code>
-	</div>
-{:else}
-	<section class="workers-section">
-		<h2>Workers <span class="dim">refreshed {lastRefresh}</span></h2>
-		<div class="worker-grid">
-			{#each workers as w}
-				<div class="card worker-card" class:stale={w.stale}>
-					<div class="worker-header">
-						<span class="worker-id mono">{w.worker_id}</span>
-						{#if w.stale}
-							<span class="badge badge-red">offline</span>
-						{:else}
-							<span class="badge badge-green">active</span>
-						{/if}
+<!-- Active keys -->
+{#if activeKeysList.length > 0}
+	<section class="keys-section">
+		<h2>Active Submitters</h2>
+		<div class="key-grid">
+			{#each activeKeysList as [keyId, info]}
+				<div class="card key-card">
+					<div class="key-header">
+						<a href="/identities/{keyId}" class="mono key-id">{keyId.slice(0, 16)}</a>
+						<span class="badge badge-green">active</span>
 					</div>
-					<div class="worker-meta">
-						<a href="/leaderboards/{w.n}">n={w.n}</a>
-						<span class="dim">{w.strategy}</span>
-						<a href="/identities/{w.key_id}" class="dim">key:{w.key_id.slice(0, 8)}</a>
+					<div class="key-stats">
+						<span>n={info.n}</span>
+						<span class="dim">{info.submissions} submissions</span>
 					</div>
-					<div class="worker-stats">
-						<div class="ws-row">
-							<span class="ws-label">Round</span>
-							<span class="ws-value mono">{w.stats.round}</span>
-						</div>
-						<div class="ws-row">
-							<span class="ws-label">Uptime</span>
-							<span class="ws-value mono">{formatUptime(w.stats.uptime_secs)}</span>
-						</div>
-						<div class="ws-row">
-							<span class="ws-label">Discoveries</span>
-							<span class="ws-value mono">{w.stats.total_discoveries.toLocaleString()}</span>
-						</div>
-						<div class="ws-row">
-							<span class="ws-label">Admitted</span>
-							<span class="ws-value mono accent">{w.stats.total_admitted}</span>
-						</div>
-						<div class="ws-row">
-							<span class="ws-label">Submitted</span>
-							<span class="ws-value mono">{w.stats.total_submitted}</span>
-						</div>
-						<div class="ws-row">
-							<span class="ws-label">Buffered</span>
-							<span class="ws-value mono">{w.stats.buffered}</span>
-						</div>
-						<div class="ws-row">
-							<span class="ws-label">Last round</span>
-							<span class="ws-value mono">{w.stats.last_round_ms}ms</span>
-						</div>
-						<div class="ws-row">
-							<span class="ws-label">Unique/round</span>
-							<span class="ws-value mono">{w.stats.new_unique_last_round.toLocaleString()}</span>
-						</div>
-						<div class="ws-row">
-							<span class="ws-label">Disc rate</span>
-							<span class="ws-value mono">{formatRate(w.stats.total_discoveries, w.stats.uptime_secs)}</span>
-						</div>
-					</div>
-					{#if w.metadata && Object.keys(w.metadata).length > 0}
-						<div class="worker-metadata">
-							{#each Object.entries(w.metadata) as [k, v]}
-								{#if k !== 'worker_id'}
-									<span class="meta-tag" title="{k}: {v}">
-										<span class="meta-key">{k}</span>
-										<span class="meta-val">{v}</span>
-									</span>
-								{/if}
-							{/each}
-						</div>
-					{/if}
 				</div>
 			{/each}
 		</div>
@@ -200,15 +114,24 @@
 	</section>
 {/if}
 
+{#if loading}
+	<div class="shimmer" style="height: 200px; border-radius: 0.75rem; margin-top: 1.5rem;"></div>
+{:else if recentAdmissions.length === 0 && activeKeysList.length === 0}
+	<div class="card empty-state">
+		<p>No activity yet.</p>
+		<p class="dim">Start submitting graphs to see live activity here.</p>
+	</div>
+{/if}
+
 <style>
-	h1 { font-family: var(--font-mono); font-size: 1.5rem; margin-bottom: 1.5rem; }
+	h1 { font-family: var(--font-mono); font-size: 1.5rem; margin-bottom: 0.5rem; }
 	h2 {
 		font-size: 1rem; color: var(--color-text-muted);
 		font-family: var(--font-mono); margin-bottom: 0.75rem;
 		display: flex; align-items: center; gap: 0.5rem;
 	}
+	.subtitle { font-size: 0.75rem; color: var(--color-text-dim); margin-bottom: 1.5rem; }
 	.dim { color: var(--color-text-dim); font-size: 0.8rem; }
-	.accent { color: var(--color-accent); }
 
 	.summary-grid {
 		display: grid;
@@ -233,53 +156,22 @@
 
 	.empty-state { text-align: center; padding: 3rem; margin-top: 1.5rem; }
 	.empty-state p { margin-bottom: 0.5rem; }
-	.empty-state code {
-		display: inline-block;
-		background: var(--color-surface-2);
-		padding: 0.5rem 1rem;
-		border-radius: 0.4rem;
-		font-family: var(--font-mono);
-		font-size: 0.8rem;
-		color: var(--color-accent);
-		margin-top: 0.5rem;
-	}
 
-	.workers-section { margin-top: 1rem; }
-	.worker-grid {
+	.keys-section { margin-bottom: 2rem; }
+	.key-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-		gap: 1rem;
+		grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+		gap: 0.75rem;
 	}
-	.worker-card { transition: border-color 0.15s; }
-	.worker-card.stale { opacity: 0.5; }
-	.worker-header {
+	.key-card { padding: 0.75rem; }
+	.key-header {
 		display: flex; justify-content: space-between; align-items: center;
-		margin-bottom: 0.5rem;
+		margin-bottom: 0.3rem;
 	}
-	.worker-id { font-weight: 700; font-size: 0.9rem; }
-	.worker-meta {
+	.key-id { font-size: 0.8rem; font-weight: 700; }
+	.key-stats {
 		display: flex; gap: 0.75rem; font-size: 0.8rem; color: var(--color-text-muted);
-		margin-bottom: 0.75rem;
-		padding-bottom: 0.5rem;
-		border-bottom: 1px solid var(--color-border);
 	}
-	.worker-stats { display: flex; flex-direction: column; gap: 0.2rem; }
-	.ws-row { display: flex; justify-content: space-between; font-size: 0.8rem; }
-	.ws-label { color: var(--color-text-muted); }
-	.ws-value { font-size: 0.8rem; }
-
-	.worker-metadata {
-		display: flex; flex-wrap: wrap; gap: 0.3rem;
-		margin-top: 0.5rem; padding-top: 0.5rem;
-		border-top: 1px solid var(--color-border);
-	}
-	.meta-tag {
-		display: inline-flex; align-items: center; gap: 0.2rem;
-		background: var(--color-bg); border-radius: 0.25rem;
-		padding: 0.1rem 0.4rem; font-size: 0.65rem;
-	}
-	.meta-key { color: var(--color-text-dim); }
-	.meta-val { color: var(--color-text-muted); font-family: var(--font-mono); }
 
 	.admissions-section { margin-top: 2rem; }
 	.admission-list { display: flex; flex-direction: column; gap: 0.25rem; }

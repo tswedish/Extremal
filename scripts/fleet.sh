@@ -13,6 +13,7 @@ MAX_DEPTH=12
 SAMPLE_BIAS=0.8
 MAX_ITERS=100000
 SERVER="http://localhost:3001"
+DASHBOARD=""
 RELEASE=""
 LOG_DIR="logs/fleet-$(date +%Y%m%d-%H%M%S)"
 
@@ -27,6 +28,7 @@ while [[ $# -gt 0 ]]; do
         --sample-bias) SAMPLE_BIAS=$2; shift 2 ;;
         --max-iters) MAX_ITERS=$2; shift 2 ;;
         --server) SERVER=$2; shift 2 ;;
+        --dashboard) DASHBOARD=$2; shift 2 ;;
         --release) RELEASE="--release"; shift ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
@@ -40,6 +42,7 @@ echo "Target:      n=$N, R($TARGET_K,$TARGET_ELL)"
 echo "Beam:        width=$BEAM_WIDTH depth=$MAX_DEPTH bias=$SAMPLE_BIAS"
 echo "Max iters:   $MAX_ITERS"
 echo "Server:      $SERVER"
+echo "Dashboard:   ${DASHBOARD:-none}"
 echo "Logs:        $LOG_DIR"
 echo "========================"
 
@@ -92,6 +95,10 @@ echo "Commit:      $COMMIT_HASH"
 for i in $(seq 1 "$WORKERS"); do
     LOG_FILE="$LOG_DIR/worker-$i.log"
     echo "Starting worker $i -> $LOG_FILE"
+    DASH_FLAG=""
+    if [[ -n "$DASHBOARD" ]]; then
+        DASH_FLAG="--dashboard $DASHBOARD"
+    fi
     NO_COLOR=1 RUST_LOG=info "$WORKER_BIN" \
         --server "$SERVER" \
         --n "$N" \
@@ -102,6 +109,7 @@ for i in $(seq 1 "$WORKERS"); do
         --sample-bias "$SAMPLE_BIAS" \
         --max-iters "$MAX_ITERS" \
         --metadata "{\"worker_id\":\"fleet-$i\",\"commit_hash\":\"$COMMIT_HASH\"}" \
+        $DASH_FLAG \
         > "$LOG_FILE" 2>&1 &
     PIDS+=($!)
 done

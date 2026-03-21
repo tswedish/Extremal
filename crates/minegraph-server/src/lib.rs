@@ -77,15 +77,6 @@ pub fn create_router(state: AppState) -> Router {
             "/keys/{key_id}/submissions",
             axum::routing::get(handlers::identity::get_key_submissions),
         )
-        // Workers
-        .route(
-            "/workers",
-            axum::routing::get(handlers::workers::list_workers),
-        )
-        .route(
-            "/workers/heartbeat",
-            axum::routing::post(handlers::workers::worker_heartbeat),
-        )
         // SSE events stream
         .route(
             "/events",

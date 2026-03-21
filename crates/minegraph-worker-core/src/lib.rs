@@ -7,4 +7,5 @@
 //! 4. Score and submit discoveries
 
 pub mod client;
+pub mod dashboard;
 pub mod engine;

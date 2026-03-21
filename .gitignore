@@ -8,9 +8,11 @@ experiments/
 
 # Node / SvelteKit
 node_modules/
-web/node_modules/
 web/.svelte-kit/
 web/build/
+dashboard/.svelte-kit/
+dashboard/build/
+package-lock.json
 
 # Rust
 /target/

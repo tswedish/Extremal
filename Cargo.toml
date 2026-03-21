@@ -12,6 +12,7 @@ members = [
     "crates/minegraph-strategies",
     "crates/minegraph-worker",
     "crates/minegraph-cli",
+    "crates/minegraph-dashboard",
 ]
 
 [workspace.package]

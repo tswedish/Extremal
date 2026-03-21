@@ -79,6 +79,11 @@ struct Cli {
     /// Attached to submissions and shown in the dashboard. Max 4KB.
     #[arg(long)]
     metadata: Option<String>,
+
+    /// Dashboard relay server URL (e.g. ws://localhost:4000/ws/worker).
+    /// Streams real-time search telemetry to the dashboard.
+    #[arg(long)]
+    dashboard: Option<String>,
 }
 
 #[tokio::main]
@@ -165,6 +170,7 @@ async fn main() {
         noise_flips: cli.noise_flips,
         max_submissions_per_round: cli.max_submissions_per_round,
         metadata,
+        dashboard_url: cli.dashboard,
     };
 
     // Build server client

@@ -1,0 +1,25 @@
+{
+  "name": "@minegraph/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "svelte": "./src/index.ts",
+  "exports": {
+    ".": {
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./components/*": {
+      "svelte": "./src/components/*",
+      "default": "./src/components/*"
+    },
+    "./graph6": {
+      "svelte": "./src/graph6.ts",
+      "default": "./src/graph6.ts"
+    },
+    "./types": {
+      "svelte": "./src/types.ts",
+      "default": "./src/types.ts"
+    }
+  }
+}

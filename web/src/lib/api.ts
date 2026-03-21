@@ -65,38 +65,16 @@ export interface SubmissionDetail {
 }
 
 export interface ServerEvent {
-	type: 'admission' | 'submission' | 'worker_heartbeat';
+	type: 'admission' | 'submission';
 	n?: number;
 	cid?: string;
 	key_id?: string;
 	rank?: number;
-	worker_id?: string;
-	stats?: WorkerStats;
-}
-
-export interface WorkerInfo {
-	worker_id: string;
-	key_id: string;
-	strategy: string;
-	n: number;
-	stats: WorkerStats;
-	last_seen: string;
-	stale: boolean;
-}
-
-export interface WorkerStats {
-	round: number;
-	total_discoveries: number;
-	total_submitted: number;
-	total_admitted: number;
-	buffered: number;
-	last_round_ms: number;
-	new_unique_last_round: number;
-	uptime_secs: number;
-	current_graph6?: string;
-	violation_score?: number;
+	// Enriched fields for admissions (for rain visualization)
+	graph6?: string;
 	goodman_gap?: number;
 	aut_order?: number;
+	metadata?: Record<string, any>;
 }
 
 // ── API functions ───────────────────────────────────────────
@@ -123,10 +101,6 @@ export interface IdentityDetail {
 
 export async function getHealth(): Promise<HealthResponse> {
 	return get('/health');
-}
-
-export async function getWorkers(): Promise<{ workers: WorkerInfo[] }> {
-	return get('/workers');
 }
 
 export async function getHistory(n: number, since?: string): Promise<{ snapshots: HistorySnapshot[] }> {

@@ -145,12 +145,17 @@ pub async fn submit_graph(
             cid: cid_hex.clone(),
             rank,
             key_id: req.key_id.clone(),
+            graph6: scored.canonical_graph6.clone(),
+            goodman_gap: scored.score.goodman_gap as f64,
+            aut_order: scored.score.aut_order,
+            metadata: req.metadata.clone(),
         });
     } else {
         let _ = state.events_tx.send(ServerEvent::Submission {
             n: req.n as i32,
             cid: cid_hex.clone(),
             key_id: req.key_id.clone(),
+            metadata: req.metadata.clone(),
         });
     }
 

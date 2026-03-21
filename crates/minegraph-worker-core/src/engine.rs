@@ -25,6 +25,8 @@ use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 use crate::client::ServerClient;
+use crate::dashboard::DashboardClient;
+use minegraph_dashboard::protocol::WorkerMessage;
 
 /// Configuration for the worker engine.
 #[derive(Clone, Debug)]
@@ -41,6 +43,8 @@ pub struct EngineConfig {
     pub noise_flips: u32,
     pub max_submissions_per_round: usize,
     pub metadata: Option<serde_json::Value>,
+    /// Dashboard relay server URL (e.g. ws://localhost:4000/ws/worker).
+    pub dashboard_url: Option<String>,
 }
 
 // ── Scored discovery (locally scored + canonical) ────────────
@@ -79,6 +83,44 @@ impl SearchObserver for CollectingObserver {
     }
 }
 
+// ── Dashboard-aware observer ────────────────────────────────
+
+/// Observer that collects discoveries AND forwards progress to the dashboard.
+struct DashboardObserver {
+    inner: CollectingObserver,
+    dashboard: DashboardClient,
+}
+
+impl DashboardObserver {
+    fn new(dashboard: DashboardClient) -> Self {
+        Self {
+            inner: CollectingObserver::new(),
+            dashboard,
+        }
+    }
+
+    fn drain(&self) -> Vec<RawDiscovery> {
+        self.inner.drain()
+    }
+}
+
+impl SearchObserver for DashboardObserver {
+    fn on_progress(&self, info: &ProgressInfo) {
+        self.dashboard.send(WorkerMessage::Progress {
+            iteration: info.iteration,
+            max_iters: info.max_iters,
+            violation_score: info.violation_score,
+            current_graph6: graph6::encode(&info.graph),
+            discoveries_so_far: info.discoveries_so_far,
+        });
+    }
+
+    fn on_discovery(&self, discovery: &RawDiscovery) {
+        self.inner.on_discovery(discovery);
+        // Note: full scored discovery is sent after scoring in the round loop
+    }
+}
+
 // ── Engine loop ─────────────────────────────────────────────
 
 /// Run the engine loop. Blocks until shutdown signal.
@@ -106,11 +148,39 @@ pub async fn run_engine(
         .and_then(|v| v.as_u64())
         .unwrap_or(5) as u32;
 
+    // Extract worker_id from metadata
+    let worker_id = config
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("worker_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("default")
+        .to_string();
+
+    let key_id = client.as_ref().and_then(|c| c.key_id()).unwrap_or_default();
+
+    // Connect to dashboard relay if configured
+    let dashboard = config.dashboard_url.as_ref().map(|url| {
+        info!(url, "connecting to dashboard relay");
+        DashboardClient::connect(
+            url.clone(),
+            WorkerMessage::Register {
+                key_id: key_id.clone(),
+                worker_id: worker_id.clone(),
+                n: config.n,
+                strategy: strategy.id().to_string(),
+                metadata: config.metadata.clone(),
+            },
+            shutdown.clone(),
+        )
+    });
+
     info!(
         n = config.n,
         strategy = strategy.id(),
         server = %config.server_url,
         offline = config.offline,
+        dashboard = config.dashboard_url.as_deref().unwrap_or("none"),
         "engine starting"
     );
 
@@ -128,23 +198,8 @@ pub async fn run_engine(
     let mut cid_sync_cursor: Option<String> = None;
     let mut threshold_score_bytes: Option<Vec<u8>> = None;
     let mut leaderboard_full: bool = false;
-    let mut current_best_g6: Option<String> = None;
-    let mut current_violation_score: u32 = 0;
-    let mut current_goodman_gap: Option<f64> = None;
-    let mut current_aut_order: Option<f64> = None;
     let mut rng = rand::rngs::SmallRng::from_entropy();
-    let start_time = Instant::now();
 
-    // Extract worker_id from metadata for heartbeat labeling, fall back to a default
-    let worker_id = config
-        .metadata
-        .as_ref()
-        .and_then(|m| m.get("worker_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("default")
-        .to_string();
-
-    let key_id = client.as_ref().and_then(|c| c.key_id()).unwrap_or_default();
     let batch_size = if config.max_submissions_per_round > 0 {
         config.max_submissions_per_round
     } else {
@@ -245,23 +300,44 @@ pub async fn run_engine(
 
         // ── Run search ──────────────────────────────────────
         let strategy_clone = strategy.clone();
-        let observer = Arc::new(CollectingObserver::new());
-        let observer_clone = observer.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            strategy_clone.search(&job, observer_clone.as_ref())
-        })
-        .await;
 
-        let result = match result {
-            Ok(r) => r,
-            Err(e) => {
-                error!("search task panicked: {e}");
-                continue;
-            }
-        };
+        let raw_discoveries: Vec<RawDiscovery>;
+        let result;
+
+        if let Some(ref dash) = dashboard {
+            let observer = Arc::new(DashboardObserver::new(dash.clone()));
+            let observer_clone = observer.clone();
+            let r = tokio::task::spawn_blocking(move || {
+                strategy_clone.search(&job, observer_clone.as_ref())
+            })
+            .await;
+            result = match r {
+                Ok(r) => r,
+                Err(e) => {
+                    error!("search task panicked: {e}");
+                    continue;
+                }
+            };
+            raw_discoveries = observer.drain();
+        } else {
+            let observer = Arc::new(CollectingObserver::new());
+            let observer_clone = observer.clone();
+            let r = tokio::task::spawn_blocking(move || {
+                strategy_clone.search(&job, observer_clone.as_ref())
+            })
+            .await;
+            result = match r {
+                Ok(r) => r,
+                Err(e) => {
+                    error!("search task panicked: {e}");
+                    continue;
+                }
+            };
+            raw_discoveries = observer.drain();
+        }
 
         // ── Collect + score + dedup discoveries ─────────────
-        let mut raw_discoveries: Vec<RawDiscovery> = observer.drain();
+        let mut raw_discoveries = raw_discoveries;
         if let Some(ref best) = result.best_graph
             && result.valid
         {
@@ -312,6 +388,25 @@ pub async fn run_engine(
 
             // Passed all filters — mark as known and queue for submission
             known_cids.insert(cid);
+
+            // Send scored discovery to dashboard
+            if let Some(ref dash) = dashboard {
+                dash.send(WorkerMessage::Discovery {
+                    graph6: canonical_g6.clone(),
+                    cid: cid.to_hex(),
+                    goodman_gap: gap as f64,
+                    aut_order,
+                    score_hex: hex::encode(&score_bytes),
+                    histogram: score
+                        .histogram
+                        .tiers
+                        .iter()
+                        .map(|t| (t.k, t.red, t.blue))
+                        .collect(),
+                    iteration: discovery.iteration,
+                });
+            }
+
             new_scored.push(ScoredDiscovery {
                 graph: discovery.graph.clone(),
                 canonical_graph6: canonical_g6,
@@ -325,20 +420,6 @@ pub async fn run_engine(
         total_skipped_dup += round_skipped_dup;
         total_skipped_server += round_skipped_server;
         total_skipped_threshold += round_skipped_threshold;
-
-        // Update current best for heartbeat visualization
-        if let Some(ref best) = result.best_graph {
-            current_best_g6 = Some(graph6::encode(best));
-            // Use the first scored discovery's data if available, else basic info
-            if let Some(scored) = new_scored.first() {
-                current_goodman_gap = Some(scored.score.goodman_gap as f64);
-                current_aut_order = Some(scored.score.aut_order);
-                current_violation_score = 0; // scored discoveries are valid
-            }
-        }
-        if !result.valid {
-            current_violation_score = 1; // non-zero indicates not valid
-        }
 
         // Add to submit buffer
         submit_buffer.extend(new_scored);
@@ -405,34 +486,16 @@ pub async fn run_engine(
             "round complete"
         );
 
-        // ── Heartbeat (every 5 rounds) ──────────────────────
-        if !config.offline
-            && round.is_multiple_of(5)
-            && let Some(ref client) = client
-        {
-            let heartbeat = serde_json::json!({
-                "worker_id": worker_id,
-                "key_id": key_id,
-                "strategy": strategy.id(),
-                "metadata": config.metadata,
-                "n": config.n,
-                "stats": {
-                    "round": round,
-                    "total_discoveries": total_discoveries,
-                    "total_submitted": total_submitted,
-                    "total_admitted": total_admitted,
-                    "buffered": submit_buffer.len(),
-                    "last_round_ms": round_ms,
-                    "new_unique_last_round": new_unique,
-                    "uptime_secs": start_time.elapsed().as_secs(),
-                    "current_graph6": current_best_g6,
-                    "violation_score": current_violation_score,
-                    "goodman_gap": current_goodman_gap,
-                    "aut_order": current_aut_order,
-                },
-                "last_seen": chrono::Utc::now().to_rfc3339(),
+        // Send round summary to dashboard
+        if let Some(ref dash) = dashboard {
+            dash.send(WorkerMessage::RoundComplete {
+                round,
+                duration_ms: round_ms,
+                discoveries: new_unique as u64,
+                submitted: round_submitted,
+                admitted: round_admitted,
+                buffered: submit_buffer.len(),
             });
-            client.heartbeat(&heartbeat).await;
         }
 
         // Trim known CIDs

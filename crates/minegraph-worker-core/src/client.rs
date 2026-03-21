@@ -169,16 +169,6 @@ impl ServerClient {
             Err(format!("submit rejected ({status}): {text}"))
         }
     }
-
-    /// Send a heartbeat with worker stats.
-    pub async fn heartbeat(&self, heartbeat: &serde_json::Value) {
-        let _ = self
-            .http
-            .post(format!("{}/api/workers/heartbeat", self.base_url))
-            .json(heartbeat)
-            .send()
-            .await;
-    }
 }
 
 /// Simple URL encoding for query parameters.

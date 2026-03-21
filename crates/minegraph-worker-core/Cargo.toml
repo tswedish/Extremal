@@ -11,7 +11,10 @@ minegraph-scoring = { path = "../minegraph-scoring" }
 minegraph-identity = { path = "../minegraph-identity" }
 minegraph-worker-api = { path = "../minegraph-worker-api" }
 minegraph-strategies = { path = "../minegraph-strategies" }
+minegraph-dashboard = { path = "../minegraph-dashboard" }
 tokio = { workspace = true }
+tokio-tungstenite = { version = "0.26", features = ["connect", "native-tls"] }
+futures-util = "0.3"
 reqwest = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }

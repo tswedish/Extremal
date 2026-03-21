@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="edge-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <!-- C5: the unique R(3,3) graph on 5 vertices
+       Pentagon with head at bottom, legs at top, arms at sides.
+       Edges form an M-shape with crossbar. -->
+  <g stroke="url(#edge-grad)" stroke-width="5.5" stroke-linecap="round" fill="none">
+    <!-- V: head to left leg, head to right leg -->
+    <line x1="50" y1="88" x2="27.6" y2="19.3"/>
+    <line x1="50" y1="88" x2="72.4" y2="19.3"/>
+    <!-- Legs to arms: left leg to left arm, right leg to right arm -->
+    <line x1="27.6" y1="19.3" x2="13.8" y2="61.7"/>
+    <line x1="72.4" y1="19.3" x2="86.2" y2="61.7"/>
+    <!-- Arms connected -->
+    <line x1="13.8" y1="61.7" x2="86.2" y2="61.7" stroke="#7a82f0"/>
+  </g>
+  <!-- Vertices -->
+  <g fill="#818cf8">
+    <circle cx="50"   cy="88"   r="5"/>
+    <circle cx="13.8" cy="61.7" r="5"/>
+    <circle cx="27.6" cy="19.3" r="5"/>
+    <circle cx="72.4" cy="19.3" r="5"/>
+    <circle cx="86.2" cy="61.7" r="5"/>
+  </g>
+</svg>
