@@ -243,8 +243,11 @@ impl SearchStrategy for Tree2Search {
             let beam_len = beam.len();
 
             // Focused mode: compute guilty edges once per depth
-            let depth_edges: Vec<(u32, u32)> = if focused {
-                let best = beam.iter().min_by_key(|e| e.violations).unwrap();
+            let depth_edges: Vec<(u32, u32)> = if focused && !beam.is_empty() {
+                let best = beam
+                    .iter()
+                    .min_by_key(|e| e.violations)
+                    .expect("beam is non-empty");
                 if best.violations > 0 {
                     let ge = guilty_edges(&best.adj_nbrs, &best.comp_nbrs, k, ell, n);
                     if ge.is_empty() { all_edges.clone() } else { ge }

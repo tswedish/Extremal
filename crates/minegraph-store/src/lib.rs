@@ -23,6 +23,12 @@ pub enum StoreError {
     NotFound(String),
 }
 
+/// Pool health status for monitoring.
+pub struct HealthStatus {
+    pub pool_size: u32,
+    pub pool_idle: u32,
+}
+
 /// The main data store, wrapping a PostgreSQL connection pool.
 #[derive(Clone)]
 pub struct Store {
@@ -52,6 +58,33 @@ impl Store {
             .fetch_one(&self.pool)
             .await
             .is_ok()
+    }
+
+    /// Detailed health check with pool statistics.
+    pub fn health_check_detailed(&self) -> HealthStatus {
+        HealthStatus {
+            pool_size: self.pool.size(),
+            pool_idle: self.pool.num_idle() as u32,
+        }
+    }
+
+    /// Try to acquire a PostgreSQL advisory lock (non-blocking).
+    /// Returns true if the lock was acquired.
+    pub async fn try_advisory_lock(&self, key: i64) -> Result<bool, StoreError> {
+        let (acquired,): (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(acquired)
+    }
+
+    /// Release a PostgreSQL advisory lock.
+    pub async fn advisory_unlock(&self, key: i64) -> Result<(), StoreError> {
+        sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     // ── Identity operations ─────────────────────────────────────

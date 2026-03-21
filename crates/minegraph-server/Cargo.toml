@@ -25,4 +25,6 @@ chrono = { workspace = true }
 sqlx = { workspace = true }
 hex = { workspace = true }
 anyhow = { workspace = true }
+tokio-util = { workspace = true }
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
 futures-core = "0.3"

@@ -15,8 +15,12 @@ pub struct AppState {
     pub leaderboard_capacity: i32,
     /// Maximum k for histogram scoring.
     pub max_k: u32,
+    /// Maximum allowed graph vertex count.
+    pub max_n: u32,
     /// Broadcast channel for SSE events.
     pub events_tx: broadcast::Sender<ServerEvent>,
+    /// Allowed CORS origins (None = permissive / dev mode).
+    pub allowed_origins: Option<Vec<String>>,
 }
 
 /// Events broadcast to SSE subscribers.

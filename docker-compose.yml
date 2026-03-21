@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: minegraph
+      POSTGRES_PASSWORD: minegraph
+      POSTGRES_DB: minegraph
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgres://minegraph:minegraph@db/minegraph
+      PORT: "3001"
+      RUST_LOG: info
+    command: ["minegraph-server", "--migrate"]
+    depends_on:
+      - db
+
+volumes:
+  pgdata:

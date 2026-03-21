@@ -192,7 +192,7 @@ impl CollectingObserver {
     }
 
     fn drain(&self) -> Vec<RawDiscovery> {
-        std::mem::take(&mut *self.discoveries.lock().unwrap())
+        std::mem::take(&mut *self.discoveries.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 
@@ -200,7 +200,10 @@ impl SearchObserver for CollectingObserver {
     fn on_progress(&self, _info: &ProgressInfo) {}
 
     fn on_discovery(&self, discovery: &RawDiscovery) {
-        self.discoveries.lock().unwrap().push(discovery.clone());
+        self.discoveries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(discovery.clone());
     }
 }
 
@@ -234,7 +237,7 @@ impl DashboardObserver {
 impl SearchObserver for DashboardObserver {
     fn on_progress(&self, info: &ProgressInfo) {
         // Throttle: only send if enough time has passed since last progress
-        let mut last = self.last_progress.lock().unwrap();
+        let mut last = self.last_progress.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         if now.duration_since(*last) < PROGRESS_INTERVAL {
             return;

@@ -4,6 +4,18 @@ use std::sync::Arc;
 
 use minegraph_identity::{Identity, canonical_payload};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Errors from the server client.
+#[derive(Debug, Error)]
+pub enum ClientError {
+    #[error("no signing identity configured")]
+    NoIdentity,
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("server rejected ({status}): {body}")]
+    Rejected { status: u16, body: String },
+}
 
 /// HTTP client for the MineGraph server API.
 pub struct ServerClient {
@@ -136,11 +148,8 @@ impl ServerClient {
         n: u32,
         graph6: &str,
         metadata: Option<&serde_json::Value>,
-    ) -> Result<SubmitResponse, String> {
-        let identity = self
-            .identity
-            .as_ref()
-            .ok_or_else(|| "no signing identity configured".to_string())?;
+    ) -> Result<SubmitResponse, ClientError> {
+        let identity = self.identity.as_ref().ok_or(ClientError::NoIdentity)?;
 
         let payload = canonical_payload(n, graph6);
         let signature = identity.sign(&payload);
@@ -158,17 +167,14 @@ impl ServerClient {
             .post(format!("{}/api/submit", self.base_url))
             .json(&req)
             .send()
-            .await
-            .map_err(|e| format!("submit request failed: {e}"))?;
+            .await?;
 
         if resp.status().is_success() {
-            resp.json()
-                .await
-                .map_err(|e| format!("submit response parse failed: {e}"))
+            Ok(resp.json().await?)
         } else {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            Err(format!("submit rejected ({status}): {text}"))
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            Err(ClientError::Rejected { status, body })
         }
     }
 }

@@ -35,7 +35,15 @@ pub async fn submit_graph(
     State(state): State<AppState>,
     Json(req): Json<SubmitRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    // 0. Validate metadata size
+    // 0a. Validate graph size
+    if req.n == 0 || req.n > state.max_n {
+        return Err(ApiError::BadRequest(format!(
+            "n must be 1..={}",
+            state.max_n
+        )));
+    }
+
+    // 0b. Validate metadata size
     if let Some(ref meta) = req.metadata {
         let meta_str = serde_json::to_string(meta).unwrap_or_default();
         if meta_str.len() > 4096 {
@@ -194,6 +202,14 @@ pub async fn verify_graph(
     State(state): State<AppState>,
     Json(req): Json<VerifyRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    // Validate graph size
+    if req.n == 0 || req.n > state.max_n {
+        return Err(ApiError::BadRequest(format!(
+            "n must be 1..={}",
+            state.max_n
+        )));
+    }
+
     let matrix = graph6::decode(&req.graph6)
         .map_err(|e| ApiError::BadRequest(format!("invalid graph6: {e}")))?;
     if matrix.n() != req.n {

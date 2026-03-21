@@ -158,6 +158,44 @@ fn load_identity() -> Result<Identity> {
     Ok(Identity::load(&path)?)
 }
 
+// ── HTTP helpers ─────────────────────────────────────────────
+
+async fn api_get(client: &reqwest::Client, url: &str) -> Result<serde_json::Value> {
+    let resp = client.get(url).send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await?;
+        anyhow::bail!("request failed ({status}): {text}");
+    }
+    Ok(resp.json().await?)
+}
+
+async fn api_post(
+    client: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let resp = client.post(url).json(body).send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await?;
+        anyhow::bail!("request failed ({status}): {text}");
+    }
+    Ok(resp.json().await?)
+}
+
+async fn api_post_empty(client: &reqwest::Client, url: &str) -> Result<serde_json::Value> {
+    let resp = client.post(url).send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await?;
+        anyhow::bail!("request failed ({status}): {text}");
+    }
+    Ok(resp.json().await?)
+}
+
+// ── Main ─────────────────────────────────────────────────────
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -213,9 +251,7 @@ async fn main() -> Result<()> {
             let identity = load_identity()?;
             let pk_hex = hex::encode(identity.verifying_key().as_bytes());
 
-            let mut body = serde_json::json!({
-                "public_key": pk_hex,
-            });
+            let mut body = serde_json::json!({ "public_key": pk_hex });
             if let Some(name) = &identity.display_name {
                 body["display_name"] = serde_json::json!(name);
             }
@@ -224,22 +260,10 @@ async fn main() -> Result<()> {
             }
 
             let client = reqwest::Client::new();
-            let resp = client
-                .post(format!("{server}/api/keys"))
-                .json(&body)
-                .send()
-                .await?;
-
-            if resp.status().is_success() {
-                let data: serde_json::Value = resp.json().await?;
-                println!("Registered with server:");
-                println!("  key_id: {}", data["key_id"]);
-                println!("  name:   {}", data["display_name"]);
-            } else {
-                let status = resp.status();
-                let text = resp.text().await?;
-                anyhow::bail!("Registration failed ({status}): {text}");
-            }
+            let data = api_post(&client, &format!("{server}/api/keys"), &body).await?;
+            println!("Registered with server:");
+            println!("  key_id: {}", data["key_id"]);
+            println!("  name:   {}", data["display_name"]);
         }
 
         Commands::Score { n, graph6, max_k } => {
@@ -283,58 +307,38 @@ async fn main() -> Result<()> {
             });
 
             let client = reqwest::Client::new();
-            let resp = client
-                .post(format!("{server}/api/submit"))
-                .json(&body)
-                .send()
-                .await?;
-
-            if resp.status().is_success() {
-                let data: serde_json::Value = resp.json().await?;
-                println!("Submitted successfully:");
-                println!("  CID:      {}", data["cid"]);
-                println!("  Verdict:  {}", data["verdict"]);
-                println!("  Admitted: {}", data["admitted"]);
-                if let Some(rank) = data["rank"].as_i64() {
-                    println!("  Rank:     {rank}");
-                }
-            } else {
-                let status = resp.status();
-                let text = resp.text().await?;
-                anyhow::bail!("Submission failed ({status}): {text}");
+            let data = api_post(&client, &format!("{server}/api/submit"), &body).await?;
+            println!("Submitted successfully:");
+            println!("  CID:      {}", data["cid"]);
+            println!("  Verdict:  {}", data["verdict"]);
+            println!("  Admitted: {}", data["admitted"]);
+            if let Some(rank) = data["rank"].as_i64() {
+                println!("  Rank:     {rank}");
             }
         }
 
         Commands::Leaderboard { server, n, limit } => {
             let client = reqwest::Client::new();
-            let resp = client
-                .get(format!("{server}/api/leaderboards/{n}?limit={limit}"))
-                .send()
-                .await?;
-
-            if resp.status().is_success() {
-                let data: serde_json::Value = resp.json().await?;
-                let total = data["total"].as_i64().unwrap_or(0);
-                println!("Leaderboard n={n} ({total} entries):");
-                if let Some(entries) = data["entries"].as_array() {
-                    for entry in entries {
-                        println!(
-                            "  #{}: {} (by {})",
-                            entry["rank"], entry["cid"], entry["key_id"]
-                        );
-                    }
+            let data = api_get(
+                &client,
+                &format!("{server}/api/leaderboards/{n}?limit={limit}"),
+            )
+            .await?;
+            let total = data["total"].as_i64().unwrap_or(0);
+            println!("Leaderboard n={n} ({total} entries):");
+            if let Some(entries) = data["entries"].as_array() {
+                for entry in entries {
+                    println!(
+                        "  #{}: {} (by {})",
+                        entry["rank"], entry["cid"], entry["key_id"]
+                    );
                 }
-            } else {
-                let status = resp.status();
-                let text = resp.text().await?;
-                anyhow::bail!("Query failed ({status}): {text}");
             }
         }
 
         Commands::Health { server } => {
             let client = reqwest::Client::new();
-            let resp = client.get(format!("{server}/api/health")).send().await?;
-            let data: serde_json::Value = resp.json().await?;
+            let data = api_get(&client, &format!("{server}/api/health")).await?;
             println!("{}", serde_json::to_string_pretty(&data)?);
         }
 
@@ -355,8 +359,7 @@ async fn handle_workers_command(relay: &str, action: WorkerAction) -> Result<()>
 
     match action {
         WorkerAction::List => {
-            let resp = client.get(format!("{relay}/api/workers")).send().await?;
-            let data: serde_json::Value = resp.json().await?;
+            let data = api_get(&client, &format!("{relay}/api/workers")).await?;
 
             let workers = data["workers"].as_array();
             let count = data["count"].as_u64().unwrap_or(0);
@@ -384,15 +387,13 @@ async fn handle_workers_command(relay: &str, action: WorkerAction) -> Result<()>
 
         WorkerAction::Status { worker } => {
             let api_addr = resolve_worker_api(&client, relay, &worker).await?;
-            let resp = client.get(format!("{api_addr}/api/status")).send().await?;
-            let data: serde_json::Value = resp.json().await?;
+            let data = api_get(&client, &format!("{api_addr}/api/status")).await?;
             println!("{}", serde_json::to_string_pretty(&data)?);
         }
 
         WorkerAction::Config { worker } => {
             let api_addr = resolve_worker_api(&client, relay, &worker).await?;
-            let resp = client.get(format!("{api_addr}/api/config")).send().await?;
-            let data: serde_json::Value = resp.json().await?;
+            let data = api_get(&client, &format!("{api_addr}/api/config")).await?;
 
             if let Some(params) = data["params"].as_array() {
                 println!("Configuration for {worker}:");
@@ -435,12 +436,12 @@ async fn handle_workers_command(relay: &str, action: WorkerAction) -> Result<()>
                 patch.insert(key.to_string(), value);
             }
 
-            let resp = client
-                .post(format!("{api_addr}/api/config"))
-                .json(&patch)
-                .send()
-                .await?;
-            let data: serde_json::Value = resp.json().await?;
+            let data = api_post(
+                &client,
+                &format!("{api_addr}/api/config"),
+                &serde_json::Value::Object(patch),
+            )
+            .await?;
 
             if let Some(applied) = data["applied"].as_array()
                 && !applied.is_empty()
@@ -468,35 +469,20 @@ async fn handle_workers_command(relay: &str, action: WorkerAction) -> Result<()>
 
         WorkerAction::Pause { worker } => {
             let api_addr = resolve_worker_api(&client, relay, &worker).await?;
-            let resp = client.post(format!("{api_addr}/api/pause")).send().await?;
-            let data: serde_json::Value = resp.json().await?;
-            if data["ok"].as_bool().unwrap_or(false) {
-                println!("Paused {worker}");
-            } else {
-                println!("Failed: {data}");
-            }
+            api_post_empty(&client, &format!("{api_addr}/api/pause")).await?;
+            println!("Paused {worker}");
         }
 
         WorkerAction::Resume { worker } => {
             let api_addr = resolve_worker_api(&client, relay, &worker).await?;
-            let resp = client.post(format!("{api_addr}/api/resume")).send().await?;
-            let data: serde_json::Value = resp.json().await?;
-            if data["ok"].as_bool().unwrap_or(false) {
-                println!("Resumed {worker}");
-            } else {
-                println!("Failed: {data}");
-            }
+            api_post_empty(&client, &format!("{api_addr}/api/resume")).await?;
+            println!("Resumed {worker}");
         }
 
         WorkerAction::Stop { worker } => {
             let api_addr = resolve_worker_api(&client, relay, &worker).await?;
-            let resp = client.post(format!("{api_addr}/api/stop")).send().await?;
-            let data: serde_json::Value = resp.json().await?;
-            if data["ok"].as_bool().unwrap_or(false) {
-                println!("Stopped {worker}");
-            } else {
-                println!("Failed: {data}");
-            }
+            api_post_empty(&client, &format!("{api_addr}/api/stop")).await?;
+            println!("Stopped {worker}");
         }
     }
 
@@ -509,8 +495,7 @@ async fn resolve_worker_api(
     relay: &str,
     worker_id: &str,
 ) -> Result<String> {
-    let resp = client.get(format!("{relay}/api/workers")).send().await?;
-    let data: serde_json::Value = resp.json().await?;
+    let data = api_get(client, &format!("{relay}/api/workers")).await?;
 
     let workers = data["workers"]
         .as_array()
