@@ -2,6 +2,10 @@
 # nauty (C FFI) compiles from source via cc crate.
 
 FROM rust:1.88-bookworm AS builder
+
+# bindgen (used by nauty-Traces-sys) needs libclang
+RUN apt-get update && apt-get install -y libclang-dev && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy workspace manifests for dependency caching
