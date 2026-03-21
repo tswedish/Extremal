@@ -77,15 +77,9 @@
 					<span class="detail-value mono">{autOrder}</span>
 				</div>
 			{/if}
-			{#if scoreHex}
-				<div class="detail-row">
-					<span class="detail-label">Score</span>
-					<span class="detail-value mono score">{scoreHex.slice(0, 32)}...</span>
-				</div>
-			{/if}
 			{#if histogram.length > 0}
 				<div class="detail-row">
-					<span class="detail-label">Histogram</span>
+					<span class="detail-label">Cliques</span>
 					<div class="histogram">
 						{#each histogram as tier}
 							<span class="tier">k={tier.k}: <span class="red">{tier.red}</span>/<span class="blue">{tier.blue}</span></span>
