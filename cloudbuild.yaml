@@ -9,20 +9,13 @@ steps:
     args: ['build', '-f', 'Dockerfile.web',
            '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/web:$COMMIT_SHA', '.']
 
-  # Build dashboard
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-f', 'Dockerfile.dashboard',
-           '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/dashboard:$COMMIT_SHA', '.']
-
   # Push all images
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/server:$COMMIT_SHA']
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/web:$COMMIT_SHA']
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/dashboard:$COMMIT_SHA']
 
-  # Deploy all three
+  # Deploy server and web
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args: ['run', 'deploy', 'minegraph-server',
@@ -35,11 +28,8 @@ steps:
            '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/web:$COMMIT_SHA',
            '--region=${_REGION}']
 
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
-    args: ['run', 'deploy', 'minegraph-dashboard',
-           '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/dashboard:$COMMIT_SHA',
-           '--region=${_REGION}']
+options:
+  logging: CLOUD_LOGGING_ONLY
 
 substitutions:
   _REGION: us-central1
