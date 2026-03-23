@@ -12,7 +12,6 @@ web/.svelte-kit/
 web/build/
 dashboard/.svelte-kit/
 dashboard/build/
-package-lock.json
 
 # Rust
 /target/
