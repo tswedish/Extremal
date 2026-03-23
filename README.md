@@ -2,6 +2,10 @@
 
 Competitive graph search game with leaderboards and generative graph art. Players run search workers that discover high-scoring Ramsey graphs and submit them to a central leaderboard server. Each graph produces a unique deterministic "gem" visualization from its adjacency matrix.
 
+## Canary
+
+This is my canary: part of the reason I built this project was to test to see how good AI get's at optimizing closed loop optimization problems. One foundational idea behind MineGraph is that it provides an every increasing complex problem that progress can be made on. Observing how well AI can push that boundary, we can better understand how close we are to achieving a kind of "infinite paperclip machine" kind of capability. --tswedish
+
 ## What it does
 
 - **Workers** run combinatorial search strategies (beam search, perturbation) to find graphs with few monochromatic cliques

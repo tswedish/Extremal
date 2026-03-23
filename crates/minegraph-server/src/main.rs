@@ -22,6 +22,11 @@ struct Config {
     )]
     database_url: String,
 
+    /// Database password (injected into DATABASE_URL as &password=<value>).
+    /// Use this to keep the password out of the DATABASE_URL env var.
+    #[arg(long, env = "DB_PASSWORD")]
+    db_password: Option<String>,
+
     /// Maximum leaderboard entries per n.
     #[arg(long, env = "LEADERBOARD_CAPACITY", default_value = "500")]
     leaderboard_capacity: i32,
@@ -64,13 +69,18 @@ async fn main() -> anyhow::Result<()> {
 
     // Connect to PostgreSQL with pool configuration
     tracing::info!("connecting to database...");
+    let mut db_url = config.database_url.clone();
+    if let Some(ref password) = config.db_password {
+        let sep = if db_url.contains('?') { "&" } else { "?" };
+        db_url.push_str(&format!("{sep}password={password}"));
+    }
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(config.db_max_connections)
         .min_connections(2)
         .acquire_timeout(Duration::from_secs(5))
         .idle_timeout(Duration::from_secs(600))
         .max_lifetime(Duration::from_secs(1800))
-        .connect(&config.database_url)
+        .connect(&db_url)
         .await?;
     let store = Store::new(pool);
 
