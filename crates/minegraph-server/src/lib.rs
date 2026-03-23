@@ -19,15 +19,15 @@ use state::AppState;
 
 /// Build the Axum router with all API routes.
 pub fn create_router(state: AppState) -> Router {
-    // Rate limiting: tight limit for CPU-intensive submit/verify endpoints
-    let submit_governor = GovernorConfigBuilder::default()
-        .per_second(5) // 5 requests/sec per IP
-        .burst_size(10)
+    // Rate limiting: only on write/scoring endpoints (CPU-intensive or state-changing)
+    let write_governor = GovernorConfigBuilder::default()
+        .per_second(300) // 300 requests/sec per IP (workers submit in bursts)
+        .burst_size(500)
         .finish()
         .unwrap();
 
-    // Routes that trigger CPU-intensive scoring get their own rate limit
-    let scoring_routes = Router::new()
+    // Routes that trigger CPU-intensive scoring or state changes
+    let write_routes = Router::new()
         .route(
             "/submit",
             axum::routing::post(handlers::submit::submit_graph),
@@ -36,15 +36,13 @@ pub fn create_router(state: AppState) -> Router {
             "/verify",
             axum::routing::post(handlers::submit::verify_graph),
         )
-        .layer(GovernorLayer::new(submit_governor));
+        .route(
+            "/keys",
+            axum::routing::post(handlers::identity::register_key),
+        )
+        .layer(GovernorLayer::new(write_governor));
 
-    // Global rate limit for all other API routes
-    let global_governor = GovernorConfigBuilder::default()
-        .per_second(100) // 100 requests/sec per IP
-        .burst_size(200)
-        .finish()
-        .unwrap();
-
+    // Read-only routes — no rate limiting (served from DB, cheap)
     let api = Router::new()
         // Health
         .route("/health", axum::routing::get(handlers::health::health))
@@ -81,16 +79,12 @@ pub fn create_router(state: AppState) -> Router {
             "/leaderboards/{n}/export/csv",
             axum::routing::get(handlers::history::export_csv),
         )
-        // Submissions (with tighter rate limiting)
-        .merge(scoring_routes)
+        // Write routes (rate limited)
+        .merge(write_routes)
+        // Read-only submission/identity lookups
         .route(
             "/submissions/{cid}",
             axum::routing::get(handlers::submit::get_submission),
-        )
-        // Identity
-        .route(
-            "/keys",
-            axum::routing::post(handlers::identity::register_key),
         )
         .route(
             "/keys/{key_id}",
@@ -104,8 +98,7 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/events",
             axum::routing::get(handlers::events::event_stream),
-        )
-        .layer(GovernorLayer::new(global_governor));
+        );
 
     // CORS: use specific origins if configured, otherwise permissive (dev mode)
     let cors = if let Some(ref origins) = state.allowed_origins {

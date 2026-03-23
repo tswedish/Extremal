@@ -135,7 +135,7 @@ All 12 backend crates implemented and working end-to-end. 86 tests passing (incl
 - `minegraph-scoring` — NeighborSet, bitwise clique counting, CliqueHistogram, Goodman (cross-validated), GraphScore with Ord, violation delta, guilty edges, fast fingerprint, canonical labeling via nauty
 - `minegraph-identity` — Ed25519 keypair, signing, verification, key file I/O (single source of truth)
 - `minegraph-store` — PostgreSQL models, 3 migrations, 30+ repository methods, lightweight leaderboard admission (no full-table rerank), advisory locks for distributed coordination, health check with pool stats
-- `minegraph-server` — Axum API (11 endpoints): health (with pool stats), leaderboards, submit, verify, identity, SSE events (enriched with graph6/scores), signed receipts. **Production hardened**: per-IP rate limiting (tiered: 5/s for scoring, 100/s global), 30s request timeouts, configurable CORS, graceful shutdown (SIGTERM/SIGINT), input validation (max n), configurable DB pool (max connections, acquire timeout, idle/max lifetime). Advisory-locked snapshot deduplication for horizontal scaling.
+- `minegraph-server` — Axum API: health, leaderboards, submit, verify, identity, SSE events, signed receipts. Production hardened: rate limiting on writes (300/s), 30s timeouts, configurable CORS, graceful shutdown, input validation, DB pool tuning, advisory-locked snapshot dedup.
 - `minegraph-worker-api` — SearchStrategy trait, SearchJob/Result, SearchObserver (CollectingObserver), WorkerCommand/Event/Status, ConfigParam (with `adjustable` flag)
 - `minegraph-strategies` — tree2 beam search (passes R(3,3)/n=5 and R(4,4)/n=17 tests), Paley graph init, perturb. ConfigParam adjustability: beam_width/max_depth/focused=adjustable, target_k/target_ell=init-only
 - `minegraph-worker-core` — Engine loop with server client, leaderboard CID sync, biased seed sampling, Paley fallback for cold start, DashboardObserver for real-time telemetry, priority-sorted submit buffer (best graphs submitted first), throttled progress events (4 Hz), **command channel** (pause/resume/stop/config-update between rounds), **HTTP API server** (status, config, control), **EngineSnapshot** watch channel for API
@@ -146,9 +146,15 @@ All 12 backend crates implemented and working end-to-end. 86 tests passing (incl
 - **Worker dashboard** (`dashboard/`) — SvelteKit: monitor mode (live worker stats, progress bars, gem thumbnails), rain mode (vertical gem columns per worker, current search at top, best-found pool below), controls (gem size, fade duration 10m-8h, history depth 10-200), fullscreen mode
 - **Shared components** (`packages/shared/`) — GemView (diamond adjacency matrix), GemViewSquare (rain variant), GemPopup (detail modal), graph6 decoder
 
+### Deployed
+- **Server**: Cloud Run (`api.minegraph.net`) + Cloud SQL (Postgres 18)
+- **Web app**: Cloud Run (`minegraph.net`) — static SvelteKit + nginx API proxy
+- **Dashboard/workers**: local only (not deployed)
+- **Auto-deploy**: `cloudbuild.yaml` ready, needs Cloud Build trigger on `main`
+
 ### TODO
-1. New search strategy — explore alternatives competitive with tree2 (research first, then implement)
-2. Deploy on Google Cloud Run + Cloud SQL (server is containerized and Cloud Run ready)
+1. Connect Cloud Build trigger to GitHub repo (auto-deploy on merge to main)
+2. New search strategy — explore alternatives competitive with tree2
 3. Server integration tests (against test database)
 
 ## Key Design Decisions
@@ -300,24 +306,35 @@ cargo run -p minegraph-server -- --migrate
 | `ALLOWED_ORIGINS` / `--allowed-origins` | (permissive) | CORS origins (comma-separated) |
 | `--migrate` | false | Run DB migrations on startup |
 
-**Rate limiting**: 5 req/s per IP on submit/verify, 100 req/s global. Request timeout: 30s.
+**Rate limiting**: 300 req/s per IP on write endpoints (submit/verify/register-key). Read-only endpoints are not rate-limited. Request timeout: 30s.
 
 ## Deployment
 
+**Live URLs:**
+- Server API: `https://api.minegraph.net`
+- Web app: `https://minegraph.net`
+- Domain: `minegraph.net` (Wix DNS → Cloud Run)
+
 ```bash
-# Local Docker (server + Postgres)
+# Local Docker
 docker compose up --build
 
-# Cloud Run (after pushing image)
-gcloud run deploy minegraph-server \
-  --image gcr.io/$PROJECT/minegraph-server \
-  --add-cloudsql-instances $PROJECT:$REGION:$INSTANCE \
-  --set-env-vars "DB_MAX_CONNECTIONS=5,ALLOWED_ORIGINS=https://minegraph.app" \
-  --set-secrets "SERVER_KEY_PATH=/secrets/server-key.json:minegraph-server-key:latest" \
-  --min-instances 1 --max-instances 4 --cpu 2 --memory 1Gi
+# Cloud Run (manual deploy — auto-deploy via cloudbuild.yaml pending)
+gcloud builds submit --config=/dev/stdin --timeout=600s <<'EOF'
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'Dockerfile.server', '-t', 'us-central1-docker.pkg.dev/minegraph/minegraph/server:TAG', '.']
+images: ['us-central1-docker.pkg.dev/minegraph/minegraph/server:TAG']
+EOF
+gcloud run services update minegraph-server --region us-central1 --image=...
+
+# Workers submit to production
+cargo run --release -p minegraph-worker -- --server https://api.minegraph.net --n 25
 ```
 
-**Horizontal scaling notes**: SSE events are instance-local (clients reconnect naturally). Leaderboard snapshots use PostgreSQL advisory locks for deduplication. Workers use CID polling which is cross-instance safe.
+**GCP resources:** Cloud SQL (`minegraph-database-0`, Postgres 18), Artifact Registry (`minegraph`), Secret Manager (`minegraph-server-key`, `minegraph-db-password`).
+
+**Scaling notes**: SSE is instance-local (clients reconnect). Snapshots use advisory locks. CID polling is cross-instance safe.
 
 ## Testing
 
