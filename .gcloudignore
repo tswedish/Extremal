@@ -1,0 +1,18 @@
+# Cloud Build ignore (overrides .gitignore for gcloud builds submit)
+.git/
+target/
+node_modules/
+logs/
+experiments/
+.env
+.config/
+.claude/
+.playwright/
+*.png
+*.swp
+*.swo
+.DS_Store
+web/.svelte-kit/
+web/build/
+dashboard/.svelte-kit/
+dashboard/build/
