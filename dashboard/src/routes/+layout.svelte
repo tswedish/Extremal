@@ -27,6 +27,7 @@
 					{store.connected ? 'connected' : 'disconnected'}
 				</span>
 			</div>
+			<span class="build-tag">v{__APP_VERSION__} ({__BUILD_COMMIT__})</span>
 		</nav>
 	</header>
 	<main class:rain-mode={store.mode === 'rain'}>
@@ -86,6 +87,13 @@
 		color: var(--color-red);
 	}
 	.conn-status.connected { color: var(--color-green); }
+	.build-tag {
+		font-family: var(--font-mono);
+		font-size: 0.55rem;
+		color: var(--color-text-dim, #555);
+		opacity: 0.4;
+		user-select: all;
+	}
 
 	main {
 		flex: 1;

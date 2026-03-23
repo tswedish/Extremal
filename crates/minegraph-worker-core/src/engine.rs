@@ -21,8 +21,8 @@ use minegraph_scoring::histogram::CliqueHistogram;
 use minegraph_scoring::score::GraphScore;
 use minegraph_types::GraphCid;
 use minegraph_worker_api::{
-    ConfigParam, ParamType, ProgressInfo, RawDiscovery, SearchJob, SearchObserver, SearchStrategy,
-    WorkerState,
+    CollectingObserver, ConfigParam, ParamType, ProgressInfo, RawDiscovery, SearchJob,
+    SearchObserver, SearchStrategy, WorkerState,
 };
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -176,35 +176,6 @@ struct ScoredDiscovery {
     canonical_graph6: String,
     cid: GraphCid,
     score: GraphScore,
-}
-
-// ── Discovery-collecting observer ───────────────────────────
-
-struct CollectingObserver {
-    discoveries: Mutex<Vec<RawDiscovery>>,
-}
-
-impl CollectingObserver {
-    fn new() -> Self {
-        Self {
-            discoveries: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn drain(&self) -> Vec<RawDiscovery> {
-        std::mem::take(&mut *self.discoveries.lock().unwrap_or_else(|e| e.into_inner()))
-    }
-}
-
-impl SearchObserver for CollectingObserver {
-    fn on_progress(&self, _info: &ProgressInfo) {}
-
-    fn on_discovery(&self, discovery: &RawDiscovery) {
-        self.discoveries
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(discovery.clone());
-    }
 }
 
 // ── Dashboard-aware observer ────────────────────────────────

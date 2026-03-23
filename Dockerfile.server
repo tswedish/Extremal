@@ -3,6 +3,8 @@
 
 FROM rust:1.88-bookworm AS builder
 
+ARG BUILD_COMMIT=unknown
+
 # bindgen (used by nauty-Traces-sys) needs libclang
 RUN apt-get update && apt-get install -y libclang-dev && rm -rf /var/lib/apt/lists/*
 
@@ -14,7 +16,7 @@ COPY crates/ crates/
 COPY migrations/ migrations/
 
 # Build only the server binary in release mode
-RUN cargo build --release -p minegraph-server
+RUN BUILD_COMMIT=${BUILD_COMMIT} cargo build --release -p minegraph-server
 
 # Runtime image
 FROM debian:bookworm-slim

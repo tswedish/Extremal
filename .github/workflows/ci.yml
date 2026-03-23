@@ -140,7 +140,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Build server image
-        run: docker build -f Dockerfile.server -t minegraph-server:test .
+        run: docker build -f Dockerfile.server --build-arg BUILD_COMMIT=${GITHUB_SHA::8} -t minegraph-server:test .
 
   web:
     name: Web (build)
@@ -156,7 +156,7 @@ jobs:
         run: npm install
 
       - name: Build web app
-        run: npm run build --workspace=web
+        run: BUILD_COMMIT=${GITHUB_SHA::8} npm run build --workspace=web
 
       - name: Build dashboard app
-        run: npm run build --workspace=dashboard
+        run: BUILD_COMMIT=${GITHUB_SHA::8} npm run build --workspace=dashboard

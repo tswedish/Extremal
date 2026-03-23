@@ -2,12 +2,16 @@
 # Builds SvelteKit static site, serves via nginx with API proxy.
 
 FROM node:24-slim AS builder
+
+ARG BUILD_COMMIT=unknown
+
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/ packages/
 COPY web/ web/
+COPY dashboard/ dashboard/
 RUN npm install
-RUN npm run build --workspace=web
+RUN BUILD_COMMIT=${BUILD_COMMIT} npm run build --workspace=web
 
 FROM nginx:alpine
 RUN apk add --no-cache gettext

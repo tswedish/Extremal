@@ -50,3 +50,43 @@ pub struct NoOpObserver;
 impl SearchObserver for NoOpObserver {
     fn on_progress(&self, _info: &ProgressInfo) {}
 }
+
+/// Discovery-collecting observer.
+///
+/// Collects all discovered graphs in a thread-safe `Vec`. Use `drain()` to
+/// retrieve and clear collected discoveries. No progress forwarding — use
+/// this in benchmarks, tests, or any context where you only care about results.
+pub struct CollectingObserver {
+    discoveries: std::sync::Mutex<Vec<crate::strategy::RawDiscovery>>,
+}
+
+impl CollectingObserver {
+    /// Create a new empty collecting observer.
+    pub fn new() -> Self {
+        Self {
+            discoveries: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Drain all collected discoveries, leaving the internal buffer empty.
+    pub fn drain(&self) -> Vec<crate::strategy::RawDiscovery> {
+        std::mem::take(&mut *self.discoveries.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl Default for CollectingObserver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SearchObserver for CollectingObserver {
+    fn on_progress(&self, _info: &ProgressInfo) {}
+
+    fn on_discovery(&self, discovery: &crate::strategy::RawDiscovery) {
+        self.discoveries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(discovery.clone());
+    }
+}

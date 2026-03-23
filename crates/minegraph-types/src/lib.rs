@@ -9,6 +9,21 @@ use std::fmt;
 /// Protocol version for API compatibility checks.
 pub const PROTOCOL_VERSION: &str = "1.0.0";
 
+/// Crate version from Cargo.toml (semver).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Short git commit SHA, captured at build time.
+pub const BUILD_COMMIT: &str = env!("BUILD_COMMIT");
+
+/// Combined version string for display: "0.2.0 (abc12345)".
+pub fn build_version() -> String {
+    if BUILD_COMMIT == "unknown" {
+        VERSION.to_string()
+    } else {
+        format!("{VERSION} ({BUILD_COMMIT})")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GraphCid — content address for a graph (blake3 hash of canonical graph6)
 // ---------------------------------------------------------------------------

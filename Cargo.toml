@@ -13,10 +13,11 @@ members = [
     "crates/minegraph-worker",
     "crates/minegraph-cli",
     "crates/minegraph-dashboard",
+    "crates/minegraph-experiments",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/tswedish/MineGraph"
