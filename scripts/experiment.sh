@@ -5,9 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 N=${1:-25}
-DASHBOARD="${2:-ws://localhost:4000/ws/worker}"
+DASHBOARD="${2:-}"
 API_PORT_BASE="${3:-0}"
-SERVER="http://localhost:3001"
+SERVER="${MINEGRAPH_SERVER:-https://api.minegraph.net}"
 LOG_DIR="logs/experiment-$(date +%Y%m%d-%H%M%S)"
 
 echo "=== MineGraph Experiment ==="
@@ -40,7 +40,10 @@ cleanup() {
 trap cleanup INT TERM
 
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-DASH="--dashboard $DASHBOARD"
+DASH=""
+if [[ -n "$DASHBOARD" ]]; then
+    DASH="--dashboard $DASHBOARD"
+fi
 WORKER_NUM=0
 
 # Launch a worker with full metadata including all strategy parameters

@@ -174,8 +174,6 @@
 		text-align: right;
 		word-break: break-all;
 	}
-	.score { font-size: 0.6rem; }
-
 	.histogram {
 		display: flex;
 		gap: 0.5rem;
