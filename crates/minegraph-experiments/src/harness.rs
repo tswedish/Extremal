@@ -161,7 +161,10 @@ pub fn compare_strategies(
 
 /// Print a comparison table to stdout.
 pub fn print_results(problem: &Problem, results: &[BenchResult]) {
-    println!("\n{} (n={}, k={}, ell={})", problem.name, problem.n, problem.k, problem.ell);
+    println!(
+        "\n{} (n={}, k={}, ell={})",
+        problem.name, problem.n, problem.k, problem.ell
+    );
     println!(
         "{:<15} {:>8} {:>12} {:>14} {:>12}",
         "Strategy", "Seeds", "Discoveries", "Mean Disc/Rnd", "Mean ms/Rnd"
@@ -170,7 +173,11 @@ pub fn print_results(problem: &Problem, results: &[BenchResult]) {
     for r in results {
         println!(
             "{:<15} {:>8} {:>12} {:>14.2} {:>12.1}",
-            r.strategy_id, r.seeds_tested, r.total_discoveries, r.mean_discoveries_per_round, r.mean_round_ms,
+            r.strategy_id,
+            r.seeds_tested,
+            r.total_discoveries,
+            r.mean_discoveries_per_round,
+            r.mean_round_ms,
         );
     }
 }

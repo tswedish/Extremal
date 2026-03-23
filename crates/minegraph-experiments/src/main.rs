@@ -1,9 +1,7 @@
 //! CLI for running experiment benchmarks.
 
 use clap::{Parser, Subcommand};
-use minegraph_experiments::harness::{
-    compare_strategies, print_results, standard_problems,
-};
+use minegraph_experiments::harness::{compare_strategies, print_results, standard_problems};
 
 #[derive(Parser)]
 #[command(name = "minegraph-experiments")]
@@ -60,21 +58,18 @@ fn main() {
             strategy,
         } => {
             let problems = standard_problems();
-            let problem = problems
-                .iter()
-                .find(|p| p.n == n)
-                .unwrap_or_else(|| {
-                    eprintln!(
-                        "No standard problem for n={}. Available: {}",
-                        n,
-                        problems
-                            .iter()
-                            .map(|p| p.n.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                    std::process::exit(1);
-                });
+            let problem = problems.iter().find(|p| p.n == n).unwrap_or_else(|| {
+                eprintln!(
+                    "No standard problem for n={}. Available: {}",
+                    n,
+                    problems
+                        .iter()
+                        .map(|p| p.n.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                std::process::exit(1);
+            });
 
             let all = minegraph_experiments::all_strategies();
             let strategies: Vec<_> = if let Some(ref id) = strategy {

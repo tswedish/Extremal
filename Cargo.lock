@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1593,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-dashboard"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1612,7 +1612,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-experiments"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "clap",
@@ -1629,7 +1629,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-graph"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "blake3",
  "minegraph-types",
@@ -1641,7 +1641,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-identity"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -1655,7 +1655,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-scoring"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "minegraph-graph",
  "minegraph-types",
@@ -1668,7 +1668,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-store"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "minegraph-graph",
@@ -1712,7 +1712,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-strategies"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "minegraph-graph",
  "minegraph-scoring",
@@ -1725,7 +1725,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-types"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "hex",
  "serde",
@@ -1734,7 +1734,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-worker"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "minegraph-graph",
@@ -1751,7 +1751,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-worker-api"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "minegraph-graph",
  "minegraph-types",
@@ -1761,7 +1761,7 @@ dependencies = [
 
 [[package]]
 name = "minegraph-worker-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "chrono",

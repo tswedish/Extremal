@@ -70,12 +70,7 @@ impl CollectingObserver {
 
     /// Drain all collected discoveries, leaving the internal buffer empty.
     pub fn drain(&self) -> Vec<crate::strategy::RawDiscovery> {
-        std::mem::take(
-            &mut *self
-                .discoveries
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()),
-        )
+        std::mem::take(&mut *self.discoveries.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 
