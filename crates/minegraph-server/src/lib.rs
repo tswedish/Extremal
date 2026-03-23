@@ -10,8 +10,6 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use tower_governor::GovernorLayer;
-use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
@@ -19,30 +17,8 @@ use state::AppState;
 
 /// Build the Axum router with all API routes.
 pub fn create_router(state: AppState) -> Router {
-    // Rate limiting: only on write/scoring endpoints (CPU-intensive or state-changing)
-    let write_governor = GovernorConfigBuilder::default()
-        .per_second(300) // 300 requests/sec per IP (workers submit in bursts)
-        .burst_size(500)
-        .finish()
-        .unwrap();
-
-    // Routes that trigger CPU-intensive scoring or state changes
-    let write_routes = Router::new()
-        .route(
-            "/submit",
-            axum::routing::post(handlers::submit::submit_graph),
-        )
-        .route(
-            "/verify",
-            axum::routing::post(handlers::submit::verify_graph),
-        )
-        .route(
-            "/keys",
-            axum::routing::post(handlers::identity::register_key),
-        )
-        .layer(GovernorLayer::new(write_governor));
-
-    // Read-only routes — no rate limiting (served from DB, cheap)
+    // Rate limiting disabled for now — Cloud Run concurrency limit (50) is sufficient.
+    // Re-enable with tower_governor when the service is public with untrusted users.
     let api = Router::new()
         // Health
         .route("/health", axum::routing::get(handlers::health::health))
@@ -79,9 +55,21 @@ pub fn create_router(state: AppState) -> Router {
             "/leaderboards/{n}/export/csv",
             axum::routing::get(handlers::history::export_csv),
         )
-        // Write routes (rate limited)
-        .merge(write_routes)
-        // Read-only submission/identity lookups
+        // Submissions
+        .route(
+            "/submit",
+            axum::routing::post(handlers::submit::submit_graph),
+        )
+        .route(
+            "/verify",
+            axum::routing::post(handlers::submit::verify_graph),
+        )
+        // Identity
+        .route(
+            "/keys",
+            axum::routing::post(handlers::identity::register_key),
+        )
+        // Read-only lookups
         .route(
             "/submissions/{cid}",
             axum::routing::get(handlers::submit::get_submission),
