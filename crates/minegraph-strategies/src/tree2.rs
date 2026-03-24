@@ -332,7 +332,21 @@ impl SearchStrategy for Tree2Search {
                                     iteration: iters_used,
                                 });
                                 discovery_count += 1;
-                                best_valid = Some(valid_graph);
+                                best_valid = Some(valid_graph.clone());
+                            }
+
+                            // Polish: hill-climb on score within valid neighborhood
+                            if let Some(polished) = crate::polish::polish_valid_graph(
+                                &valid_graph,
+                                k,
+                                ell,
+                                3, // max_rounds
+                                &mut known_cids,
+                                observer,
+                                iters_used,
+                            ) {
+                                discovery_count += 1;
+                                best_valid = Some(polished);
                             }
                         }
                     }
