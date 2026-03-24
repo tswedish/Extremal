@@ -429,7 +429,7 @@ mod tests {
         assert!(result.valid);
         let discoveries = observer.drain();
         assert!(
-            discoveries.len() >= 1,
+            !discoveries.is_empty(),
             "should discover at least 1 valid graph, got {}",
             discoveries.len()
         );
