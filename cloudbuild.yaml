@@ -18,11 +18,14 @@ steps:
     args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/extremal/web:$COMMIT_SHA']
 
   # Deploy server and web (services still named minegraph-* on GCP, domain mappings point there)
+  # Override command since binary renamed from minegraph-server to extremal-server
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args: ['run', 'deploy', 'minegraph-server',
            '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/extremal/server:$COMMIT_SHA',
-           '--region=${_REGION}']
+           '--region=${_REGION}',
+           '--command=extremal-server',
+           '--args=--migrate']
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
