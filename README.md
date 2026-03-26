@@ -1,4 +1,6 @@
-# Extremal
+<p align="center">                                                                                                                                                                    
+      <img src="Extremal-logo.png" alt="Extremal" width="400">                                                                                                                            
+    </p>
 
 Competitive graph search game with leaderboards and generative graph art. Players run search workers that discover high-scoring Ramsey graphs and submit them to a central leaderboard server. Each graph produces a unique deterministic "gem" visualization from its adjacency matrix.
 
