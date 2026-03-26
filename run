@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MineGraph v1 task runner
+# Extremal v1 task runner
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -46,13 +46,13 @@ case "$cmd" in
         cargo fmt
         ;;
     server)
-        cargo run $RELEASE -p minegraph-server -- "${EXTRA_ARGS[@]}"
+        cargo run $RELEASE -p extremal-server -- "${EXTRA_ARGS[@]}"
         ;;
     worker)
-        cargo run $RELEASE -p minegraph-worker -- "${EXTRA_ARGS[@]}"
+        cargo run $RELEASE -p extremal-worker -- "${EXTRA_ARGS[@]}"
         ;;
     cli)
-        cargo run $RELEASE -p minegraph-cli -- "${EXTRA_ARGS[@]}"
+        cargo run $RELEASE -p extremal-cli -- "${EXTRA_ARGS[@]}"
         ;;
     web-dev)
         cd web && npm run dev
@@ -64,7 +64,7 @@ case "$cmd" in
         cd web && npm run check
         ;;
     dashboard)
-        cargo run $RELEASE -p minegraph-dashboard -- "${EXTRA_ARGS[@]}"
+        cargo run $RELEASE -p extremal-dashboard -- "${EXTRA_ARGS[@]}"
         ;;
     dashboard-ui)
         cd dashboard && npm run dev
@@ -73,21 +73,21 @@ case "$cmd" in
         ./scripts/fleet.sh "${EXTRA_ARGS[@]}" $RELEASE
         ;;
     stop-fleet)
-        echo "Killing all minegraph-worker processes..."
-        pkill -f "minegraph-worker" 2>/dev/null || true
+        echo "Killing all extremal-worker processes..."
+        pkill -f "extremal-worker" 2>/dev/null || true
         sleep 1
-        if pgrep -f "minegraph-worker" > /dev/null 2>&1; then
+        if pgrep -f "extremal-worker" > /dev/null 2>&1; then
             echo "Force killing remaining..."
-            pkill -9 -f "minegraph-worker" 2>/dev/null || true
+            pkill -9 -f "extremal-worker" 2>/dev/null || true
         fi
         echo "Done."
         ;;
     migrate)
-        cargo run -p minegraph-server -- --migrate
+        cargo run -p extremal-server -- --migrate
         ;;
     help|*)
         cat <<EOF
-MineGraph v1 task runner
+Extremal v1 task runner
 
 Usage: ./run <command> [--release] [args...]
 
@@ -99,7 +99,7 @@ Commands:
   fmt         Format code
   server      Start API server
   worker      Start search worker
-  cli         Run minegraph CLI
+  cli         Run extremal CLI
   dashboard   Start dashboard relay server on :4000
   dashboard-ui Dashboard SvelteKit dev server on :5174
   web-dev     SvelteKit dev server on :5173

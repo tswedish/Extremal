@@ -101,7 +101,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
     }).await.unwrap_or(false);
 
     Json(json!({
-        "name": "MineGraph",
+        "name": "Extremal",
         "version": ramseynet_types::PROTOCOL_VERSION,
         "status": if db_ok { "ok" } else { "degraded" },
         "db": if db_ok { "connected" } else { "error" }
@@ -190,8 +190,8 @@ PRAGMA journal_mode=DELETE;  -- instead of WAL (GCS FUSE doesn't support WAL)
 # 4. Enhance health check
 # 5. Create Dockerfile and .dockerignore
 # 6. Test locally:
-docker build -t minegraph .
-docker run -p 8080:8080 -v $(pwd)/data:/data minegraph
+docker build -t extremal .
+docker run -p 8080:8080 -v $(pwd)/data:/data extremal
 ```
 
 ### Phase 2: GCP setup
@@ -200,21 +200,21 @@ docker run -p 8080:8080 -v $(pwd)/data:/data minegraph
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com
 
 # Create Artifact Registry repo
-gcloud artifacts repositories create minegraph \
+gcloud artifacts repositories create extremal \
   --repository-format=docker \
   --location=us-central1
 
 # Build and push
-gcloud builds submit --tag us-central1-docker.pkg.dev/PROJECT/minegraph/server:latest
+gcloud builds submit --tag us-central1-docker.pkg.dev/PROJECT/extremal/server:latest
 
 # Create GCS bucket for database (if using GCS FUSE)
-gsutil mb gs://PROJECT-minegraph-data
+gsutil mb gs://PROJECT-extremal-data
 ```
 
 ### Phase 3: Deploy
 ```bash
-gcloud run deploy minegraph \
-  --image=us-central1-docker.pkg.dev/PROJECT/minegraph/server:latest \
+gcloud run deploy extremal \
+  --image=us-central1-docker.pkg.dev/PROJECT/extremal/server:latest \
   --port=8080 \
   --min-instances=1 \
   --max-instances=1 \
@@ -222,14 +222,14 @@ gcloud run deploy minegraph \
   --cpu=1 \
   --set-env-vars="RUST_LOG=info" \
   --execution-environment=gen2 \
-  --add-volume=name=dbvol,type=cloud-storage,bucket=PROJECT-minegraph-data \
+  --add-volume=name=dbvol,type=cloud-storage,bucket=PROJECT-extremal-data \
   --add-volume-mount=volume=dbvol,mount-path=/data \
   --allow-unauthenticated
 ```
 
 ### Phase 4: Custom domain (optional)
 ```bash
-gcloud run domain-mappings create --service=minegraph --domain=minegraph.example.com
+gcloud run domain-mappings create --service=extremal --domain=extremal.example.com
 ```
 
 ## Security Checklist

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MineGraph experimental fleet — tuned worker configs based on empirical results
+# Extremal experimental fleet — tuned worker configs based on empirical results
 # Usage: ./scripts/experiment.sh [N] [DASHBOARD_URL]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -7,10 +7,10 @@ cd "$(dirname "$0")/.."
 N=${1:-25}
 DASHBOARD="${2:-}"
 API_PORT_BASE="${3:-0}"
-SERVER="${MINEGRAPH_SERVER:-https://api.minegraph.net}"
+SERVER="${EXTREMAL_SERVER:-https://api.extremal.online}"
 LOG_DIR="logs/experiment-$(date +%Y%m%d-%H%M%S)"
 
-echo "=== MineGraph Experiment ==="
+echo "=== Extremal Experiment ==="
 echo "Target:      n=$N, R(5,5)"
 echo "Server:      $SERVER"
 echo "Dashboard:   $DASHBOARD"
@@ -19,8 +19,8 @@ echo "============================"
 
 # Build release
 echo "Building worker (release)..."
-cargo build -p minegraph-worker --release 2>&1 | tail -1
-BIN="target/release/minegraph-worker"
+cargo build -p extremal-worker --release 2>&1 | tail -1
+BIN="target/release/extremal-worker"
 
 mkdir -p "$LOG_DIR"
 PIDS=()

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { store } from '$lib/dashboard-store.svelte';
-	import GemViewSquare from '@minegraph/shared/components/GemViewSquare.svelte';
-	import GemPopup from '@minegraph/shared/components/GemPopup.svelte';
-	import type { RainGemData } from '@minegraph/shared';
+	import GemViewSquare from '@extremal/shared/components/GemViewSquare.svelte';
+	import GemPopup from '@extremal/shared/components/GemPopup.svelte';
+	import type { RainGemData } from '@extremal/shared';
 
 	// ── Connection panel state ──────────────────────────
 	let urlInput = $state(store.serverUrl);

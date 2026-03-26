@@ -3,31 +3,31 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-f', 'Dockerfile.server',
            '--build-arg', 'BUILD_COMMIT=$SHORT_SHA',
-           '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/server:$COMMIT_SHA', '.']
+           '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/extremal/server:$COMMIT_SHA', '.']
 
   # Build web
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-f', 'Dockerfile.web',
            '--build-arg', 'BUILD_COMMIT=$SHORT_SHA',
-           '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/web:$COMMIT_SHA', '.']
+           '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/extremal/web:$COMMIT_SHA', '.']
 
   # Push all images
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/server:$COMMIT_SHA']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/extremal/server:$COMMIT_SHA']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/web:$COMMIT_SHA']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/extremal/web:$COMMIT_SHA']
 
   # Deploy server and web
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
-    args: ['run', 'deploy', 'minegraph-server',
-           '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/server:$COMMIT_SHA',
+    args: ['run', 'deploy', 'extremal-server',
+           '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/extremal/server:$COMMIT_SHA',
            '--region=${_REGION}']
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
-    args: ['run', 'deploy', 'minegraph-web',
-           '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/minegraph/web:$COMMIT_SHA',
+    args: ['run', 'deploy', 'extremal-web',
+           '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/extremal/web:$COMMIT_SHA',
            '--region=${_REGION}']
 
 options:

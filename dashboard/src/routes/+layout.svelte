@@ -17,7 +17,7 @@
 <div class="app">
 	<header>
 		<nav>
-			<a href="/" class="logo">MineGraph Dashboard</a>
+			<a href="/" class="logo">Extremal Dashboard</a>
 			<div class="nav-right">
 				<div class="mode-toggle">
 					<button class:active={store.mode === 'monitor'} onclick={() => { store.mode = 'monitor'; store.saveSettings(); }}>Monitor</button>

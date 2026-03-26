@@ -1,6 +1,6 @@
 // Dashboard state management — connects to relay server via WebSocket
 
-import type { RainGemData } from '@minegraph/shared';
+import type { RainGemData } from '@extremal/shared';
 
 // ── Protocol types (mirror Rust protocol.rs) ──────────────
 

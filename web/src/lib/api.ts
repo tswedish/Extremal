@@ -1,4 +1,4 @@
-// MineGraph v1 API client
+// Extremal v1 API client
 
 const BASE = '/api';
 

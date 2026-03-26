@@ -1,4 +1,4 @@
-# Multi-stage build for the MineGraph web app.
+# Multi-stage build for the Extremal web app.
 # Builds SvelteKit static site, serves via nginx with API proxy.
 
 FROM node:24-slim AS builder

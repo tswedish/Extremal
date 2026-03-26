@@ -1,0 +1,18 @@
+[package]
+name = "extremal-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+extremal-types = { path = "../extremal-types" }
+extremal-graph = { path = "../extremal-graph" }
+extremal-identity = { path = "../extremal-identity" }
+extremal-worker-api = { path = "../extremal-worker-api" }
+extremal-worker-core = { path = "../extremal-worker-core" }
+extremal-strategies = { path = "../extremal-strategies" }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }

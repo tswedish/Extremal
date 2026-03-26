@@ -56,7 +56,7 @@
 </script>
 
 <div class="hero">
-	<h1 class="title">MineGraph</h1>
+	<h1 class="title">Extremal</h1>
 	<p class="subtitle">Competitive graph search. Discover, score, rank.</p>
 	<div class="badges">
 		{#if health}

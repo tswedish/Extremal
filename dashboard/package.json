@@ -1,5 +1,5 @@
 {
-  "name": "minegraph-dashboard",
+  "name": "extremal-dashboard",
   "version": "0.2.1",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@minegraph/shared": "*"
+    "@extremal/shared": "*"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",

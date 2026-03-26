@@ -2,9 +2,9 @@ services:
   db:
     image: postgres:16
     environment:
-      POSTGRES_USER: minegraph
-      POSTGRES_PASSWORD: minegraph
-      POSTGRES_DB: minegraph
+      POSTGRES_USER: extremal
+      POSTGRES_PASSWORD: extremal
+      POSTGRES_DB: extremal
     ports:
       - "5432:5432"
     volumes:
@@ -17,10 +17,10 @@ services:
     ports:
       - "3001:3001"
     environment:
-      DATABASE_URL: postgres://minegraph:minegraph@db/minegraph
+      DATABASE_URL: postgres://extremal:extremal@db/extremal
       PORT: "3001"
       RUST_LOG: info
-    command: ["minegraph-server", "--migrate"]
+    command: ["extremal-server", "--migrate"]
     depends_on:
       - db
 

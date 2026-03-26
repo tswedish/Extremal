@@ -1,4 +1,4 @@
-// Shared TypeScript types for MineGraph web apps
+// Shared TypeScript types for Extremal web apps
 
 export interface HistogramTier {
 	k: number;

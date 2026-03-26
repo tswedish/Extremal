@@ -1,6 +1,6 @@
 <script lang="ts">
-	import GemViewSquare from '@minegraph/shared/components/GemViewSquare.svelte';
-	import GemPopup from '@minegraph/shared/components/GemPopup.svelte';
+	import GemViewSquare from '@extremal/shared/components/GemViewSquare.svelte';
+	import GemPopup from '@extremal/shared/components/GemPopup.svelte';
 	import { getLeaderboard, subscribeEvents, type ServerEvent, type LeaderboardEntry } from '$lib/api';
 
 	// ── Types ────────────────────────────────────────────────
@@ -278,7 +278,7 @@
 
 	<!-- Overlays -->
 	<div class="overlay top-overlay">
-		<span class="rain-title">MineGraph</span>
+		<span class="rain-title">Extremal</span>
 		<div class="rain-stats">
 			{#if admissionsCount > 0}
 				<span class="stat">{admissionsCount} admitted</span>

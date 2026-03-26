@@ -1,0 +1,17 @@
+[package]
+name = "extremal-strategies"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+extremal-types = { path = "../extremal-types" }
+extremal-graph = { path = "../extremal-graph" }
+extremal-scoring = { path = "../extremal-scoring" }
+extremal-worker-api = { path = "../extremal-worker-api" }
+rand = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

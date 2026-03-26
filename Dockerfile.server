@@ -1,4 +1,4 @@
-# Multi-stage build for the MineGraph leaderboard server.
+# Multi-stage build for the Extremal leaderboard server.
 # nauty (C FFI) compiles from source via cc crate.
 
 FROM rust:1.88-bookworm AS builder
@@ -16,15 +16,15 @@ COPY crates/ crates/
 COPY migrations/ migrations/
 
 # Build only the server binary in release mode
-RUN BUILD_COMMIT=${BUILD_COMMIT} cargo build --release -p minegraph-server
+RUN BUILD_COMMIT=${BUILD_COMMIT} cargo build --release -p extremal-server
 
 # Runtime image
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/minegraph-server /usr/local/bin/
+COPY --from=builder /app/target/release/extremal-server /usr/local/bin/
 
 EXPOSE 3001
 ENV RUST_LOG=info
 
-ENTRYPOINT ["minegraph-server"]
+ENTRYPOINT ["extremal-server"]

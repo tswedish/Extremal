@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MineGraph fleet launcher
+# Extremal fleet launcher
 # Usage: ./scripts/fleet.sh [--workers N] [--n N] [--release]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -38,7 +38,7 @@ done
 
 mkdir -p "$LOG_DIR"
 
-echo "=== MineGraph Fleet ==="
+echo "=== Extremal Fleet ==="
 echo "Workers:     $WORKERS"
 echo "Target:      n=$N, R($TARGET_K,$TARGET_ELL)"
 echo "Beam:        width=$BEAM_WIDTH depth=$MAX_DEPTH bias=$SAMPLE_BIAS"
@@ -51,11 +51,11 @@ echo "========================"
 
 # Build first
 echo "Building worker..."
-cargo build -p minegraph-worker $RELEASE 2>&1 | tail -1
+cargo build -p extremal-worker $RELEASE 2>&1 | tail -1
 
-WORKER_BIN="target/debug/minegraph-worker"
+WORKER_BIN="target/debug/extremal-worker"
 if [[ -n "$RELEASE" ]]; then
-    WORKER_BIN="target/release/minegraph-worker"
+    WORKER_BIN="target/release/extremal-worker"
 fi
 
 # Save config

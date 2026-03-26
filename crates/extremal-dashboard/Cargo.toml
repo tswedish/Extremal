@@ -1,0 +1,28 @@
+[package]
+name = "extremal-dashboard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "extremal-dashboard"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace deps
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true, features = ["ws"] }
+tower-http = { workspace = true, features = ["fs"] }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+
+anyhow = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+
+# Local crates
+extremal-identity = { path = "../extremal-identity" }

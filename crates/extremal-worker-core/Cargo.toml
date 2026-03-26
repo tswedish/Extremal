@@ -1,0 +1,26 @@
+[package]
+name = "extremal-worker-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+extremal-types = { path = "../extremal-types" }
+extremal-graph = { path = "../extremal-graph" }
+extremal-scoring = { path = "../extremal-scoring" }
+extremal-identity = { path = "../extremal-identity" }
+extremal-worker-api = { path = "../extremal-worker-api" }
+extremal-strategies = { path = "../extremal-strategies" }
+extremal-dashboard = { path = "../extremal-dashboard" }
+axum = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { version = "0.26", features = ["connect", "native-tls"] }
+futures-util = "0.3"
+reqwest = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }

@@ -1,4 +1,4 @@
-# MineGraph v1
+# Extremal v1
 
 Combinatorial graph search game with competitive leaderboards.
 
@@ -10,15 +10,15 @@ Combinatorial graph search game with competitive leaderboards.
 ./run test        # Rust tests only
 
 # Database setup (local Postgres on port 5432)
-sudo -u postgres createuser minegraph
-sudo -u postgres createdb -O minegraph minegraph
-sudo -u postgres psql -c "ALTER USER minegraph WITH PASSWORD 'minegraph';"
+sudo -u postgres createuser extremal
+sudo -u postgres createdb -O extremal extremal
+sudo -u postgres psql -c "ALTER USER extremal WITH PASSWORD 'extremal';"
 
 # Environment (reads DATABASE_URL from env or .env)
 cp .env.example .env
 
 # Server (first run with --migrate, then just cargo run)
-cargo run -p minegraph-server -- --migrate
+cargo run -p extremal-server -- --migrate
 
 # Dashboard relay server (for worker monitoring)
 ./run dashboard
@@ -30,7 +30,7 @@ cargo run -p minegraph-server -- --migrate
 ./run web-dev
 
 # Worker (with dashboard connection)
-cargo run -p minegraph-worker -- --n 25 --beam-width 80 --max-depth 12 --dashboard ws://localhost:4000/ws/worker
+cargo run -p extremal-worker -- --n 25 --beam-width 80 --max-depth 12 --dashboard ws://localhost:4000/ws/worker
 
 # Experiment fleet (8 diverse workers, release build)
 ./scripts/experiment.sh 25
@@ -39,21 +39,21 @@ cargo run -p minegraph-worker -- --n 25 --beam-width 80 --max-depth 12 --dashboa
 ./scripts/fleet.sh --workers 4 --n 25 --release --dashboard ws://localhost:4000/ws/worker
 
 # CLI
-cargo run -p minegraph-cli -- keygen --name "test"
-cargo run -p minegraph-cli -- register-key
-cargo run -p minegraph-cli -- submit --n 5 --graph6 'Dhc'
-cargo run -p minegraph-cli -- leaderboard --n 25
-cargo run -p minegraph-cli -- score --n 5 --graph6 'D~{'
-cargo run -p minegraph-cli -- health
+cargo run -p extremal-cli -- keygen --name "test"
+cargo run -p extremal-cli -- register-key
+cargo run -p extremal-cli -- submit --n 5 --graph6 'Dhc'
+cargo run -p extremal-cli -- leaderboard --n 25
+cargo run -p extremal-cli -- score --n 5 --graph6 'D~{'
+cargo run -p extremal-cli -- health
 
 # Worker management (via dashboard relay)
-cargo run -p minegraph-cli -- workers --relay http://localhost:4000 list
-cargo run -p minegraph-cli -- workers status fleet-1
-cargo run -p minegraph-cli -- workers config fleet-1
-cargo run -p minegraph-cli -- workers set fleet-1 beam_width=200 sample_bias=0.5
-cargo run -p minegraph-cli -- workers pause fleet-1
-cargo run -p minegraph-cli -- workers resume fleet-1
-cargo run -p minegraph-cli -- workers stop fleet-1
+cargo run -p extremal-cli -- workers --relay http://localhost:4000 list
+cargo run -p extremal-cli -- workers status fleet-1
+cargo run -p extremal-cli -- workers config fleet-1
+cargo run -p extremal-cli -- workers set fleet-1 beam_width=200 sample_bias=0.5
+cargo run -p extremal-cli -- workers pause fleet-1
+cargo run -p extremal-cli -- workers resume fleet-1
+cargo run -p extremal-cli -- workers stop fleet-1
 ```
 
 Other commands: `./run clippy`, `./run fmt`, `./run server`, `./run worker`, `./run dashboard`, `./run dashboard-ui`, `./run web-dev`, `./run web-build`.
@@ -64,7 +64,7 @@ docker compose up --build        # Postgres + server container
 docker compose down              # Tear down
 ```
 
-Logging: `RUST_LOG=debug cargo run -p minegraph-server` (default: info).
+Logging: `RUST_LOG=debug cargo run -p extremal-server` (default: info).
 
 ## Architecture
 
@@ -91,22 +91,22 @@ Rust workspace (`crates/`) with 12 crates + 2 SvelteKit web apps + shared compon
 ## Crate Dependency Graph
 
 ```
-minegraph-types                    (leaf — no internal deps)
+extremal-types                    (leaf — no internal deps)
     |
-    +-> minegraph-graph            (types)
+    +-> extremal-graph            (types)
     |       |
-    |       +-> minegraph-scoring  (types, graph)
+    |       +-> extremal-scoring  (types, graph)
     |       |
-    |       +-> minegraph-identity (types)
+    |       +-> extremal-identity (types)
     |
-    +-> minegraph-store            (types, graph, scoring, identity)
-    +-> minegraph-server           (types, graph, scoring, identity, store)
-    +-> minegraph-worker-api       (types, graph)
-    +-> minegraph-worker-core      (types, graph, scoring, identity, worker-api, strategies, dashboard)
-    +-> minegraph-strategies       (types, graph, scoring, worker-api)
-    +-> minegraph-worker           (worker-api, worker-core, strategies, identity)
-    +-> minegraph-cli              (types, graph, scoring, identity)
-    +-> minegraph-dashboard        (identity) — standalone dashboard relay server
+    +-> extremal-store            (types, graph, scoring, identity)
+    +-> extremal-server           (types, graph, scoring, identity, store)
+    +-> extremal-worker-api       (types, graph)
+    +-> extremal-worker-core      (types, graph, scoring, identity, worker-api, strategies, dashboard)
+    +-> extremal-strategies       (types, graph, scoring, worker-api)
+    +-> extremal-worker           (worker-api, worker-core, strategies, identity)
+    +-> extremal-cli              (types, graph, scoring, identity)
+    +-> extremal-dashboard        (identity) — standalone dashboard relay server
 ```
 
 ## Web Apps & Frontend
@@ -114,7 +114,7 @@ minegraph-types                    (leaf — no internal deps)
 ```
 web/                     Server web app (SvelteKit, port 5173)
 dashboard/               Worker dashboard app (SvelteKit, port 5174)
-packages/shared/         Shared components (@minegraph/shared)
+packages/shared/         Shared components (@extremal/shared)
   src/components/
     GemView.svelte         Diamond-rotated adjacency matrix visualization
     GemViewSquare.svelte   Rain column variant (opacity, glow, click props)
@@ -130,25 +130,25 @@ npm workspaces: root `package.json` manages `packages/shared`, `web`, `dashboard
 All 12 backend crates implemented and working end-to-end. 86 tests passing (including property-based tests).
 
 ### Implemented
-- `minegraph-types` — GraphCid (blake3), KeyId, Verdict
-- `minegraph-graph` — AdjacencyMatrix, graph6 encode/decode, blake3 CID
-- `minegraph-scoring` — NeighborSet, bitwise clique counting, CliqueHistogram, Goodman (cross-validated), GraphScore with Ord, violation delta, guilty edges, fast fingerprint, canonical labeling via nauty
-- `minegraph-identity` — Ed25519 keypair, signing, verification, key file I/O (single source of truth)
-- `minegraph-store` — PostgreSQL models, 3 migrations, 30+ repository methods, lightweight leaderboard admission (no full-table rerank), advisory locks for distributed coordination, health check with pool stats
-- `minegraph-server` — Axum API: health, leaderboards, submit, verify, identity, SSE events, signed receipts. Production hardened: rate limiting on writes (300/s), 30s timeouts, configurable CORS, graceful shutdown, input validation, DB pool tuning, advisory-locked snapshot dedup.
-- `minegraph-worker-api` — SearchStrategy trait, SearchJob/Result, SearchObserver (CollectingObserver), WorkerCommand/Event/Status, ConfigParam (with `adjustable` flag)
-- `minegraph-strategies` — tree2 beam search (passes R(3,3)/n=5 and R(4,4)/n=17 tests), Paley graph init, perturb. ConfigParam adjustability: beam_width/max_depth/focused=adjustable, target_k/target_ell=init-only
-- `minegraph-worker-core` — Engine loop with server client, leaderboard CID sync, biased seed sampling, Paley fallback for cold start, DashboardObserver for real-time telemetry, priority-sorted submit buffer (best graphs submitted first), throttled progress events (4 Hz), **command channel** (pause/resume/stop/config-update between rounds), **HTTP API server** (status, config, control), **EngineSnapshot** watch channel for API
-- `minegraph-worker` — Full CLI binary: n, target_k, target_ell, beam_width, max_depth, sample_bias, focused, offline, signing key, metadata, dashboard URL, **--api-port** for control API
-- `minegraph-cli` — init, keygen (with --output), whoami, register-key, score (local), submit, leaderboard, health, **workers** (list/status/config/set/pause/resume/stop via relay discovery + direct worker API)
-- `minegraph-dashboard` — Standalone Axum relay server: worker WebSocket endpoint, browser WebSocket endpoint (multiplexed), REST API for worker listing, **Ed25519 challenge/response auth** (default open, verified flag), static file serving, **api_addr** in worker info for CLI discovery
+- `extremal-types` — GraphCid (blake3), KeyId, Verdict
+- `extremal-graph` — AdjacencyMatrix, graph6 encode/decode, blake3 CID
+- `extremal-scoring` — NeighborSet, bitwise clique counting, CliqueHistogram, Goodman (cross-validated), GraphScore with Ord, violation delta, guilty edges, fast fingerprint, canonical labeling via nauty
+- `extremal-identity` — Ed25519 keypair, signing, verification, key file I/O (single source of truth)
+- `extremal-store` — PostgreSQL models, 3 migrations, 30+ repository methods, lightweight leaderboard admission (no full-table rerank), advisory locks for distributed coordination, health check with pool stats
+- `extremal-server` — Axum API: health, leaderboards, submit, verify, identity, SSE events, signed receipts. Production hardened: rate limiting on writes (300/s), 30s timeouts, configurable CORS, graceful shutdown, input validation, DB pool tuning, advisory-locked snapshot dedup.
+- `extremal-worker-api` — SearchStrategy trait, SearchJob/Result, SearchObserver (CollectingObserver), WorkerCommand/Event/Status, ConfigParam (with `adjustable` flag)
+- `extremal-strategies` — tree2 beam search (passes R(3,3)/n=5 and R(4,4)/n=17 tests), Paley graph init, perturb. ConfigParam adjustability: beam_width/max_depth/focused=adjustable, target_k/target_ell=init-only
+- `extremal-worker-core` — Engine loop with server client, leaderboard CID sync, biased seed sampling, Paley fallback for cold start, DashboardObserver for real-time telemetry, priority-sorted submit buffer (best graphs submitted first), throttled progress events (4 Hz), **command channel** (pause/resume/stop/config-update between rounds), **HTTP API server** (status, config, control), **EngineSnapshot** watch channel for API
+- `extremal-worker` — Full CLI binary: n, target_k, target_ell, beam_width, max_depth, sample_bias, focused, offline, signing key, metadata, dashboard URL, **--api-port** for control API
+- `extremal-cli` — init, keygen (with --output), whoami, register-key, score (local), submit, leaderboard, health, **workers** (list/status/config/set/pause/resume/stop via relay discovery + direct worker API)
+- `extremal-dashboard` — Standalone Axum relay server: worker WebSocket endpoint, browser WebSocket endpoint (multiplexed), REST API for worker listing, **Ed25519 challenge/response auth** (default open, verified flag), static file serving, **api_addr** in worker info for CLI discovery
 - **Server web app** (`web/`) — SvelteKit: home, leaderboards (paginated with GemView), activity dashboard (submission-inferred), rain visualization (SSE-driven), submission detail, identity profiles
 - **Worker dashboard** (`dashboard/`) — SvelteKit: monitor mode (live worker stats, progress bars, gem thumbnails), rain mode (vertical gem columns per worker, current search at top, best-found pool below), controls (gem size, fade duration 10m-8h, history depth 10-200), fullscreen mode
 - **Shared components** (`packages/shared/`) — GemView (diamond adjacency matrix), GemViewSquare (rain variant), GemPopup (detail modal), graph6 decoder
 
 ### Deployed
-- **Server**: Cloud Run (`api.minegraph.net`) + Cloud SQL (Postgres 18)
-- **Web app**: Cloud Run (`minegraph.net`) — static SvelteKit + nginx API proxy
+- **Server**: Cloud Run (`api.extremal.online`) + Cloud SQL (Postgres 18)
+- **Web app**: Cloud Run (`extremal.online`) — static SvelteKit + nginx API proxy
 - **Dashboard/workers**: local only (not deployed)
 - **Auto-deploy**: `cloudbuild.yaml` ready, needs Cloud Build trigger on `main`
 
@@ -254,7 +254,7 @@ Commands are processed between rounds (not mid-search). A round typically takes 
 --focused false           Focused edge flipping
 --noise-flips 0           Random flips on seed
 --offline                 Local-only (no server)
---signing-key PATH        Ed25519 key (or auto-detect .config/minegraph/key.json)
+--signing-key PATH        Ed25519 key (or auto-detect .config/extremal/key.json)
 --dashboard URL            Dashboard relay WebSocket URL
 --api-port PORT            Worker control API port (0=auto, default 0)
 --metadata JSON            Metadata JSON (max 4KB, attached to submissions)
@@ -279,17 +279,17 @@ Tables: `identities`, `graphs`, `submissions`, `scores`, `leaderboard`,
 ### Local setup
 
 ```bash
-sudo -u postgres createuser minegraph
-sudo -u postgres createdb -O minegraph minegraph
-sudo -u postgres psql -c "ALTER USER minegraph WITH PASSWORD 'minegraph';"
+sudo -u postgres createuser extremal
+sudo -u postgres createdb -O extremal extremal
+sudo -u postgres psql -c "ALTER USER extremal WITH PASSWORD 'extremal';"
 ```
 
 ### Persistent server key
 
 ```bash
-cargo run -p minegraph-cli -- keygen --name "my-server" -o .config/minegraph/server-key.json
-export SERVER_KEY_PATH=.config/minegraph/server-key.json
-cargo run -p minegraph-server -- --migrate
+cargo run -p extremal-cli -- keygen --name "my-server" -o .config/extremal/server-key.json
+export SERVER_KEY_PATH=.config/extremal/server-key.json
+cargo run -p extremal-server -- --migrate
 ```
 
 ## Server Configuration
@@ -297,7 +297,7 @@ cargo run -p minegraph-server -- --migrate
 | Env Var / Flag | Default | Description |
 |---------------|---------|-------------|
 | `PORT` / `--port` | 3001 | HTTP listen port |
-| `DATABASE_URL` / `--database-url` | `postgres://localhost/minegraph` | PostgreSQL connection |
+| `DATABASE_URL` / `--database-url` | `postgres://localhost/extremal` | PostgreSQL connection |
 | `LEADERBOARD_CAPACITY` / `--leaderboard-capacity` | 500 | Max entries per leaderboard |
 | `MAX_K` / `--max-k` | 5 | Max clique size for scoring |
 | `MAX_N` / `--max-n` | 62 | Max graph vertex count (graph6 limit) |
@@ -311,9 +311,9 @@ cargo run -p minegraph-server -- --migrate
 ## Deployment
 
 **Live URLs:**
-- Server API: `https://api.minegraph.net`
-- Web app: `https://minegraph.net`
-- Domain: `minegraph.net` (Wix DNS → Cloud Run)
+- Server API: `https://api.extremal.online`
+- Web app: `https://extremal.online`
+- Domain: `extremal.online` (Wix DNS → Cloud Run)
 
 ```bash
 # Local Docker
@@ -323,16 +323,16 @@ docker compose up --build
 gcloud builds submit --config=/dev/stdin --timeout=600s <<'EOF'
 steps:
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-f', 'Dockerfile.server', '-t', 'us-central1-docker.pkg.dev/minegraph/minegraph/server:TAG', '.']
-images: ['us-central1-docker.pkg.dev/minegraph/minegraph/server:TAG']
+    args: ['build', '-f', 'Dockerfile.server', '-t', 'us-central1-docker.pkg.dev/extremal/extremal/server:TAG', '.']
+images: ['us-central1-docker.pkg.dev/extremal/extremal/server:TAG']
 EOF
-gcloud run services update minegraph-server --region us-central1 --image=...
+gcloud run services update extremal-server --region us-central1 --image=...
 
 # Workers submit to production
-cargo run --release -p minegraph-worker -- --server https://api.minegraph.net --n 25
+cargo run --release -p extremal-worker -- --server https://api.extremal.online --n 25
 ```
 
-**GCP resources:** Cloud SQL (`minegraph-database-0`, Postgres 18), Artifact Registry (`minegraph`), Secret Manager (`minegraph-server-key`, `minegraph-db-password`).
+**GCP resources:** Cloud SQL (`extremal-database-0`, Postgres 18), Artifact Registry (`extremal`), Secret Manager (`extremal-server-key`, `extremal-db-password`).
 
 **Scaling notes**: SSE is instance-local (clients reconnect). Snapshots use advisory locks. CID polling is cross-instance safe.
 

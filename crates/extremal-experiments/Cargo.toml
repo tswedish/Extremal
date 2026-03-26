@@ -1,0 +1,28 @@
+[package]
+name = "extremal-experiments"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "extremal-experiments"
+path = "src/main.rs"
+
+[dependencies]
+extremal-types = { path = "../extremal-types" }
+extremal-graph = { path = "../extremal-graph" }
+extremal-scoring = { path = "../extremal-scoring" }
+extremal-worker-api = { path = "../extremal-worker-api" }
+extremal-strategies = { path = "../extremal-strategies" }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "compare"
+harness = false

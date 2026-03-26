@@ -1,8 +1,8 @@
-# MineGraph — Technical Collaboration Prompt
+# Extremal — Technical Collaboration Prompt
 
-You are helping me design and operationalize a project called **MineGraph**.
+You are helping me design and operationalize a project called **Extremal**.
 
-MineGraph is the new name for what I had been calling RamseyNet. The core is still distributed Ramsey graph search, but the identity is broader and more playful: mathematically interesting graphs are "gems," and one output of the system is not just leaderboard-worthy search results, but also visual artifacts such as deterministic pixel-art "MineGraph Gems." I want the math, the systems engineering, the public-facing infrastructure, and the art angle to reinforce each other.
+Extremal is the new name for what I had been calling RamseyNet. The core is still distributed Ramsey graph search, but the identity is broader and more playful: mathematically interesting graphs are "gems," and one output of the system is not just leaderboard-worthy search results, but also visual artifacts such as deterministic pixel-art "Extremal Gems." I want the math, the systems engineering, the public-facing infrastructure, and the art angle to reinforce each other.
 
 I want you to treat this as a serious technical project with room for fun and public participation.
 
@@ -112,7 +112,7 @@ Strategy: tree2
 ## What I want from you
 
 ### Step 1: Restate the project
-Restate MineGraph back to me as you understand it: mission, architecture, immediate goals, long-term vision, risks/tensions.
+Restate Extremal back to me as you understand it: mission, architecture, immediate goals, long-term vision, risks/tensions.
 
 ### Step 2: Ask me sharp questions
 Ask me the most important questions needed to guide the next wave of development. Do not ask vague filler questions. Ask questions that affect architecture, experimentation, repo layout, operator workflow, public deployment, and creative direction.
@@ -153,7 +153,7 @@ Think concretely about:
 - How to structure agent-assisted (Claude/GPT) development workflows
 
 ### Step 6: Creative/art direction
-MineGraph should have a creative identity. I'm working on deterministic pixel-art renderings of graphs as "MineGraph Gems." Think about:
+Extremal should have a creative identity. I'm working on deterministic pixel-art renderings of graphs as "Extremal Gems." Think about:
 - How to choose graphs worth visualizing
 - How to derive visual style from graph invariants (symmetry group, spectrum, clique structure)
 - How to make this deterministic and reproducible

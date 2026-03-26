@@ -1,4 +1,4 @@
-# MineGraph Signing System — Design Document
+# Extremal Signing System — Design Document
 
 Status: **Phase 1 complete.** Key generation, payload signing, server verification,
 key registration, commit hash tracking, and web display are all implemented.
@@ -141,7 +141,7 @@ fn canonical_payload(k: u32, ell: u32, n: u32, rgxf_json: &serde_json::Value) ->
 
 ### Key file format
 
-Simple JSON at `~/.config/minegraph/key.json`:
+Simple JSON at `~/.config/extremal/key.json`:
 
 ```json
 {
@@ -158,20 +158,20 @@ No encryption for v1. These are attribution keys, not financial keys.
 ### Worker
 
 ```
---signing-key PATH    Path to MineGraph signing key file (optional)
+--signing-key PATH    Path to Extremal signing key file (optional)
 ```
 
 If provided, the worker signs every submission. The key_id and signature are
 included in the POST body. If not provided, submissions are anonymous.
 
-### Standalone commands (future, or in a `minegraph` CLI binary)
+### Standalone commands (future, or in a `extremal` CLI binary)
 
 ```bash
-minegraph keygen                          # generate key, write to ~/.config/minegraph/key.json
-minegraph keygen --output ./my_key.json   # custom path
-minegraph register-key                    # POST public key to server
-minegraph register-key --server URL       # custom server
-minegraph whoami                          # show key_id and display name
+extremal keygen                          # generate key, write to ~/.config/extremal/key.json
+extremal keygen --output ./my_key.json   # custom path
+extremal register-key                    # POST public key to server
+extremal register-key --server URL       # custom server
+extremal whoami                          # show key_id and display name
 ```
 
 For v1, these could be subcommands of the worker binary or a simple script.
@@ -283,7 +283,7 @@ OAuth. This matches the "permissionless protocol" ethos.
 
 1. Per-key submission stats page
 2. Key management in web app
-3. `minegraph` CLI binary with keygen/register subcommands
+3. `extremal` CLI binary with keygen/register subcommands
 4. Optional per-worker keys for fleet deployments
 
 ## Open questions

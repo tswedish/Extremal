@@ -1,7 +1,7 @@
-# Literature Review and Strategy Ideas for MineGraph
+# Literature Review and Strategy Ideas for Extremal
 
 Research notes from key Ramsey number papers, with concrete ideas for
-improving MineGraph's search strategies.
+improving Extremal's search strategies.
 
 ## Papers Reviewed
 
@@ -14,13 +14,13 @@ The definitive reference. Key facts for R(5,5):
 - Any new R(5,5)-42 graph would need to be very structurally different from all 656 known ones
   (no shared 37-vertex subgraph with any of them)
 
-**Implication for MineGraph:** Our search at n=25 is well within the valid range (25 < 43),
+**Implication for Extremal:** Our search at n=25 is well within the valid range (25 < 43),
 so valid R(5,5) graphs on 25 vertices definitely exist. The question is finding *diverse*
 and *high-quality* ones, not whether they exist.
 
 ### 2. Exoo & Tatarevic, "New Lower Bounds for 28 Classical Ramsey Numbers" (2015)
 
-The most methodologically relevant paper for MineGraph. They improved 28 Ramsey bounds
+The most methodologically relevant paper for Extremal. They improved 28 Ramsey bounds
 using a pipeline of heuristic search methods.
 
 #### Key Algorithms
@@ -74,7 +74,7 @@ Proved R(4,3,3) = 30 using SAT with abstraction and symmetry breaking.
 - **Symmetry breaking:** Use canonical forms to prune isomorphic search branches
 - Computed the full set R(3,3,3;13) = 78,892 Ramsey colorings as a prerequisite
 
-**Implication for MineGraph:** SAT-based approaches work well for exact enumeration
+**Implication for Extremal:** SAT-based approaches work well for exact enumeration
 near the Ramsey boundary. For our use case (finding diverse graphs at n=25, well below
 the boundary), SAT could find solutions in unexplored regions but wouldn't be competitive
 with local search for throughput.
@@ -107,13 +107,13 @@ Proved the current best upper bound by checking ~2 trillion cases.
 - For 37 vertices: 15,244 graphs from only TWO overlap structures.
 - For 34-36 vertices: NO valid gluings at all.
 
-**Implication for MineGraph:** The R(4,5,24) catalogue tells us what the "universe"
+**Implication for Extremal:** The R(4,5,24) catalogue tells us what the "universe"
 of valid n=25 graphs looks like: ~50% density, fairly regular degree sequences,
 degree range [6,13]. Our search should be biased toward this structural profile.
 
 ---
 
-## Concrete Ideas for MineGraph
+## Concrete Ideas for Extremal
 
 ### HIGH PRIORITY — Implement Now
 
@@ -214,7 +214,7 @@ to identify edges that are forced.
 #### 9. Catalogue Mining
 
 The 352,366 graphs in R(4,5,24) are publicly available (from McKay's website).
-Download them, convert to RGXF, and submit to MineGraph. This would instantly
+Download them, convert to RGXF, and submit to Extremal. This would instantly
 populate the leaderboard with the complete known catalogue. Then local search
 operates on the edges of the known universe rather than rediscovering it.
 
@@ -222,7 +222,7 @@ operates on the edges of the known universe rather than rediscovering it.
 
 The splitting method from Exoo-Tatarevic: take a valid R(5,5) graph on n
 vertices, split the K5-free subgraph into two K3-free subgraphs to get an
-R(3,3,5) coloring. This extends MineGraph's scope to multicolor Ramsey problems.
+R(3,3,5) coloring. This extends Extremal's scope to multicolor Ramsey problems.
 
 ---
 

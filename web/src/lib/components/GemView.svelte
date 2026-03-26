@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Re-export from shared package — all existing imports continue to work
-	import SharedGemView from '@minegraph/shared/components/GemView.svelte';
+	import SharedGemView from '@extremal/shared/components/GemView.svelte';
 
 	let {
 		graph6,

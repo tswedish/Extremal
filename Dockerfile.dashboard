@@ -1,4 +1,4 @@
-# Multi-stage build for the MineGraph dashboard (relay server + UI).
+# Multi-stage build for the Extremal dashboard (relay server + UI).
 # Combines the Rust relay binary with the built SvelteKit dashboard.
 
 # Stage 1: Build dashboard UI
@@ -17,14 +17,14 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY migrations/ migrations/
-RUN cargo build --release -p minegraph-dashboard
+RUN cargo build --release -p extremal-dashboard
 
 # Stage 3: Runtime
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=rust-builder /app/target/release/minegraph-dashboard /usr/local/bin/
+COPY --from=rust-builder /app/target/release/extremal-dashboard /usr/local/bin/
 COPY --from=ui-builder /app/dashboard/build /app/dashboard-ui
 
 EXPOSE 4000
 ENV RUST_LOG=info
-ENTRYPOINT ["minegraph-dashboard", "--static-dir", "/app/dashboard-ui"]
+ENTRYPOINT ["extremal-dashboard", "--static-dir", "/app/dashboard-ui"]

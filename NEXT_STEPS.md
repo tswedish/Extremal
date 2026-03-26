@@ -1,10 +1,10 @@
-# MineGraph — Next Steps
+# Extremal — Next Steps
 
 Current state as of 2026-03-20.
 
 ## Where We Are
 
-MineGraph v1 is now the root project (moved from subproject into repo root).
+Extremal v1 is now the root project (moved from subproject into repo root).
 All 11 backend crates implemented and working end-to-end. 62 tests passing.
 
 - **tree2 is the production default** with bitwise neighbor bitmask acceleration.

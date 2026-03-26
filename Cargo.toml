@@ -1,26 +1,26 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/minegraph-types",
-    "crates/minegraph-graph",
-    "crates/minegraph-scoring",
-    "crates/minegraph-identity",
-    "crates/minegraph-store",
-    "crates/minegraph-server",
-    "crates/minegraph-worker-api",
-    "crates/minegraph-worker-core",
-    "crates/minegraph-strategies",
-    "crates/minegraph-worker",
-    "crates/minegraph-cli",
-    "crates/minegraph-dashboard",
-    "crates/minegraph-experiments",
+    "crates/extremal-types",
+    "crates/extremal-graph",
+    "crates/extremal-scoring",
+    "crates/extremal-identity",
+    "crates/extremal-store",
+    "crates/extremal-server",
+    "crates/extremal-worker-api",
+    "crates/extremal-worker-core",
+    "crates/extremal-strategies",
+    "crates/extremal-worker",
+    "crates/extremal-cli",
+    "crates/extremal-dashboard",
+    "crates/extremal-experiments",
 ]
 
 [workspace.package]
 version = "0.2.1"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/tswedish/MineGraph"
+repository = "https://github.com/tswedish/Extremal"
 
 [workspace.dependencies]
 # Serialization
