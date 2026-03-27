@@ -6,7 +6,7 @@
 <div class="app">
 	<header>
 		<nav>
-			<a href="https://extremalgames.org" class="logo" target="_blank" rel="noopener noreferrer">Extremal Games</a>
+			<a href="https://extremalgames.ai" class="logo" target="_blank" rel="noopener noreferrer">Extremal Games</a>
 			<div class="nav-links">
 				<a href="/leaderboards">Leaderboards</a>
 				<a href="/submit">Submit</a>
