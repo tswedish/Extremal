@@ -505,6 +505,9 @@ pub async fn run_engine(
         ));
     }
 
+    // Cross-round state for strategy continuity
+    let mut carry_state: Option<Box<dyn std::any::Any + Send>> = None;
+
     loop {
         if *shutdown.borrow() {
             info!("shutdown signal received");
@@ -721,7 +724,7 @@ pub async fn run_engine(
             config: config.strategy_config.clone(),
             known_cids: known_cids.clone(),
             max_known_cids: config.max_known_cids,
-            carry_state: None,
+            carry_state: carry_state.take(),
         };
 
         // Recompute batch size in case config changed
@@ -735,7 +738,7 @@ pub async fn run_engine(
         let strategy_clone = strategy.clone();
 
         let raw_discoveries: Vec<RawDiscovery>;
-        let result;
+        let mut result;
 
         if let Some(ref dash) = dashboard {
             let observer = Arc::new(DashboardObserver::new(dash.clone()));
@@ -768,6 +771,9 @@ pub async fn run_engine(
             };
             raw_discoveries = observer.drain();
         }
+
+        // Save carry_state for next round
+        carry_state = result.carry_state.take();
 
         // ── Collect + score + dedup discoveries ─────────────
         let mut raw_discoveries = raw_discoveries;

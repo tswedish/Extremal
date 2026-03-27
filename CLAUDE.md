@@ -56,6 +56,21 @@ cargo run -p extremal-cli -- workers resume fleet-1
 cargo run -p extremal-cli -- workers stop fleet-1
 ```
 
+```bash
+# Experiment agent loop (launches fleet + runs Claude in observe-decide-act loop)
+./run agent-loop                                      # Production server, 4 workers
+./run agent-loop --local                              # Local dev server
+./run agent-loop --workers 8 --polish 200             # More workers, deeper polish
+./run agent-loop --interval 3m --budget 2.00          # Faster cycles, higher budget
+./run agent-loop --no-fleet                           # Observe only (fleet already running)
+
+# Manual fleet management
+./run agent-fleet --workers 4 --n 25 --polish 100   # Launch fleet without loop
+./run agent-status                                    # Status report
+./run agent-snapshot 25                               # Leaderboard snapshot
+./run stop-fleet                                      # Kill all workers
+```
+
 Other commands: `./run clippy`, `./run fmt`, `./run server`, `./run worker`, `./run dashboard`, `./run dashboard-ui`, `./run web-dev`, `./run web-build`.
 
 ```bash
@@ -137,9 +152,9 @@ All 12 backend crates implemented and working end-to-end. 86 tests passing (incl
 - `extremal-store` — PostgreSQL models, 3 migrations, 30+ repository methods, lightweight leaderboard admission (no full-table rerank), advisory locks for distributed coordination, health check with pool stats
 - `extremal-server` — Axum API: health, leaderboards, submit, verify, identity, SSE events, signed receipts. Production hardened: rate limiting on writes (300/s), 30s timeouts, configurable CORS, graceful shutdown, input validation, DB pool tuning, advisory-locked snapshot dedup.
 - `extremal-worker-api` — SearchStrategy trait, SearchJob/Result, SearchObserver (CollectingObserver), WorkerCommand/Event/Status, ConfigParam (with `adjustable` flag)
-- `extremal-strategies` — tree2 beam search (passes R(3,3)/n=5 and R(4,4)/n=17 tests), Paley graph init, perturb. ConfigParam adjustability: beam_width/max_depth/focused=adjustable, target_k/target_ell=init-only
-- `extremal-worker-core` — Engine loop with server client, leaderboard CID sync, biased seed sampling, Paley fallback for cold start, DashboardObserver for real-time telemetry, priority-sorted submit buffer (best graphs submitted first), throttled progress events (4 Hz), **command channel** (pause/resume/stop/config-update between rounds), **HTTP API server** (status, config, control), **EngineSnapshot** watch channel for API
-- `extremal-worker` — Full CLI binary: n, target_k, target_ell, beam_width, max_depth, sample_bias, focused, offline, signing key, metadata, dashboard URL, **--api-port** for control API
+- `extremal-strategies` — tree2 beam search (passes R(3,3)/n=5 and R(4,4)/n=17 tests), tabu search, Paley graph init, perturb. **Deep polish**: score-aware tabu walk within valid-graph space (incremental 4-clique and triangle deltas via `violation_delta`). **Score-biased beam**: prefers balanced kc/ei when violations are low. **Cross-round carry_state**: tree2 preserves fingerprint dedup across rounds. ConfigParam adjustability: beam_width/max_depth/focused/polish_max_steps/polish_tabu_tenure/score_bias_threshold=adjustable, target_k/target_ell=init-only
+- `extremal-worker-core` — Engine loop with server client, leaderboard CID sync, biased seed sampling, Paley fallback for cold start, DashboardObserver for real-time telemetry, priority-sorted submit buffer (best graphs submitted first), throttled progress events (4 Hz), **command channel** (pause/resume/stop/config-update between rounds), **HTTP API server** (status, config, control), **EngineSnapshot** watch channel for API, **carry_state** passthrough between rounds
+- `extremal-worker` — Full CLI binary: n, target_k, target_ell, beam_width, max_depth, sample_bias, focused, offline, signing key, metadata, dashboard URL, **--api-port** for control API, **--polish-max-steps**, **--polish-tabu-tenure**, **--score-bias-threshold**
 - `extremal-cli` — init, keygen (with --output), whoami, register-key, score (local), submit, leaderboard, health, **workers** (list/status/config/set/pause/resume/stop via relay discovery + direct worker API)
 - `extremal-dashboard` — Standalone Axum relay server: worker WebSocket endpoint, browser WebSocket endpoint (multiplexed), REST API for worker listing, **Ed25519 challenge/response auth** (default open, verified flag), static file serving, **api_addr** in worker info for CLI discovery
 - **Server web app** (`web/`) — SvelteKit: home, leaderboards (paginated with GemView), activity dashboard (submission-inferred), rain visualization (SSE-driven), submission detail, identity profiles
@@ -235,7 +250,7 @@ Each worker runs a local Axum HTTP API server for runtime control. Port is confi
 
 **Adjustable params** (can be changed at runtime between rounds):
 - Engine: `max_iters`, `sample_bias`, `noise_flips`, `max_submissions_per_round`
-- tree2 strategy: `beam_width`, `max_depth`, `focused`
+- tree2 strategy: `beam_width`, `max_depth`, `focused`, `polish_max_steps`, `polish_tabu_tenure`, `score_bias_threshold`
 
 **Init-only params** (fixed at startup): `n`, `target_k`, `target_ell`, `server_url`, `strategy_id`
 
@@ -253,6 +268,9 @@ Commands are processed between rounds (not mid-search). A round typically takes 
 --sample-bias 0.8         Leaderboard seed bias (0=uniform, 1=top)
 --focused false           Focused edge flipping
 --noise-flips 0           Random flips on seed
+--polish-max-steps 100    Tabu walk steps per valid graph (0=disable, default 100)
+--polish-tabu-tenure 25   Edge tabu tenure during polish (default 25)
+--score-bias-threshold 3  Prefer balanced beam when violations <= this (default 3)
 --offline                 Local-only (no server)
 --signing-key PATH        Ed25519 key (or auto-detect .config/extremal/key.json)
 --dashboard URL            Dashboard relay WebSocket URL

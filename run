@@ -82,6 +82,18 @@ case "$cmd" in
         fi
         echo "Done."
         ;;
+    agent-loop)
+        ./scripts/loop.sh "${EXTRA_ARGS[@]}"
+        ;;
+    agent-fleet)
+        ./scripts/agent-fleet.sh "${EXTRA_ARGS[@]}"
+        ;;
+    agent-status)
+        ./scripts/agent-status.sh "${EXTRA_ARGS[@]}"
+        ;;
+    agent-snapshot)
+        ./scripts/agent-snapshot.sh "${EXTRA_ARGS[@]}"
+        ;;
     migrate)
         cargo run -p extremal-server -- --migrate
         ;;
@@ -106,6 +118,10 @@ Commands:
   web-build   Build web app for production
   fleet       Launch worker fleet (--workers N --n N --dashboard URL)
   stop-fleet  Kill all running workers
+  agent-loop  Autonomous experiment loop (--workers N --polish N --interval 5m)
+  agent-fleet Launch experiment agent fleet (--workers N --n N --polish N)
+  agent-status  Fleet status report (agent-status [LOG_DIR])
+  agent-snapshot  Take leaderboard snapshot (agent-snapshot [N] [SERVER])
   migrate     Run database migrations
   help        Show this help
 

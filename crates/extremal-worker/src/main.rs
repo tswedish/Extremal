@@ -90,6 +90,18 @@ struct Cli {
     /// Port for the worker control API (0 = auto-assign).
     #[arg(long, default_value = "0")]
     api_port: u16,
+
+    /// Max steps for score-aware polish walk per valid graph (0 = disable).
+    #[arg(long, default_value = "100")]
+    polish_max_steps: u64,
+
+    /// Tabu tenure during polish walk.
+    #[arg(long, default_value = "25")]
+    polish_tabu_tenure: u64,
+
+    /// Score-bias threshold: prefer balanced kc/ei in beam when violations <= this.
+    #[arg(long, default_value = "3")]
+    score_bias_threshold: u64,
 }
 
 #[tokio::main]
@@ -144,6 +156,9 @@ async fn main() {
         "focused": cli.focused,
         "target_k": cli.target_k,
         "target_ell": cli.target_ell,
+        "polish_max_steps": cli.polish_max_steps,
+        "polish_tabu_tenure": cli.polish_tabu_tenure,
+        "score_bias_threshold": cli.score_bias_threshold,
     });
 
     // Parse metadata JSON

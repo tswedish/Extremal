@@ -133,6 +133,31 @@ impl SearchStrategy for Tree2Search {
                 default: serde_json::json!(5),
                 adjustable: false,
             },
+            ConfigParam {
+                name: "polish_max_steps".into(),
+                label: "Polish Max Steps".into(),
+                description: "Maximum steps in score-aware tabu polish walk".into(),
+                param_type: ParamType::Int { min: 0, max: 5_000 },
+                default: serde_json::json!(500),
+                adjustable: true,
+            },
+            ConfigParam {
+                name: "polish_tabu_tenure".into(),
+                label: "Polish Tabu Tenure".into(),
+                description: "Steps an edge stays tabu during polish".into(),
+                param_type: ParamType::Int { min: 5, max: 100 },
+                default: serde_json::json!(25),
+                adjustable: true,
+            },
+            ConfigParam {
+                name: "score_bias_threshold".into(),
+                label: "Score Bias Threshold".into(),
+                description: "Violation count below which beam selection prefers balanced kc/ei"
+                    .into(),
+                param_type: ParamType::Int { min: 0, max: 20 },
+                default: serde_json::json!(3),
+                adjustable: true,
+            },
         ]
     }
 
@@ -162,6 +187,21 @@ impl SearchStrategy for Tree2Search {
             .get("target_ell")
             .and_then(|v| v.as_u64())
             .unwrap_or(5) as u32;
+        let polish_max_steps = job
+            .config
+            .get("polish_max_steps")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(500) as u32;
+        let polish_tabu_tenure = job
+            .config
+            .get("polish_tabu_tenure")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(25) as u32;
+        let score_bias_threshold = job
+            .config
+            .get("score_bias_threshold")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3);
 
         let n = job.n;
         let max_iters = job.max_iters;
@@ -192,8 +232,13 @@ impl SearchStrategy for Tree2Search {
         let mut best_valid: Option<AdjacencyMatrix> = None;
         let mut best_invalid: Option<(AdjacencyMatrix, u64)> = None;
 
-        // Fingerprint dedup
-        let mut seen: HashSet<u64> = HashSet::new();
+        // Fingerprint dedup — restore from carry_state if available
+        let mut seen: HashSet<u64> = job
+            .carry_state
+            .as_ref()
+            .and_then(|s| s.downcast_ref::<HashSet<u64>>())
+            .cloned()
+            .unwrap_or_default();
         let mut known_cids = job.known_cids.clone();
 
         seen.insert(fast_fingerprint(&seed_entry.adj_nbrs.masks));
@@ -335,12 +380,13 @@ impl SearchStrategy for Tree2Search {
                                 best_valid = Some(valid_graph.clone());
                             }
 
-                            // Polish: hill-climb on score within valid neighborhood
+                            // Polish: tabu walk on score within valid neighborhood
                             if let Some(polished) = crate::polish::polish_valid_graph(
                                 &valid_graph,
                                 k,
                                 ell,
-                                3, // max_rounds
+                                polish_max_steps,
+                                polish_tabu_tenure,
                                 &mut known_cids,
                                 observer,
                                 iters_used,
@@ -384,8 +430,23 @@ impl SearchStrategy for Tree2Search {
                 break;
             }
 
-            // Select top beam_width by violation score
-            candidates.sort_by_key(|&(_, _, _, v, _, _)| v);
+            // Select top beam_width by violation score.
+            // Secondary: when violations are low, prefer balanced kc/ei
+            // (graphs closer to equal red/blue clique counts tend to
+            // produce better-scoring valid graphs).
+            candidates.sort_by(|a, b| {
+                let va = a.3;
+                let vb = b.3;
+                va.cmp(&vb).then_with(|| {
+                    if va <= score_bias_threshold {
+                        let balance_a = (a.4 as i64 - a.5 as i64).unsigned_abs();
+                        let balance_b = (b.4 as i64 - b.5 as i64).unsigned_abs();
+                        balance_a.cmp(&balance_b) // lower imbalance = better
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+            });
             candidates.truncate(beam_width);
 
             // Materialize new beam
@@ -448,12 +509,22 @@ impl SearchStrategy for Tree2Search {
         let has_valid = best_valid.is_some();
         let best = best_valid.or(best_invalid.map(|(g, _)| g));
 
+        // Cap seen set to prevent unbounded growth across rounds
+        const MAX_CARRY_SIZE: usize = 50_000;
+        if seen.len() > MAX_CARRY_SIZE {
+            let excess = seen.len() - MAX_CARRY_SIZE;
+            let to_remove: Vec<u64> = seen.iter().copied().take(excess).collect();
+            for fp in to_remove {
+                seen.remove(&fp);
+            }
+        }
+
         SearchResult {
             valid: has_valid,
             best_graph: best,
             iterations_used: iters_used,
             discoveries: Vec::new(),
-            carry_state: None,
+            carry_state: Some(Box::new(seen)),
         }
     }
 }
