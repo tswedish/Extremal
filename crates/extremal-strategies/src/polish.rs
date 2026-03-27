@@ -1,10 +1,14 @@
 //! Score-aware polishing for valid Ramsey graphs.
 //!
 //! When a strategy finds a valid graph (zero violations), polish explores
-//! its single-flip neighborhood to find better-scoring variants. The key
-//! insight: among valid R(k,ℓ) graphs, the leaderboard score is dominated
-//! by 4-clique counts, then triangle balance. Polish hill-climbs on these
-//! secondary metrics.
+//! the valid-graph landscape via a tabu walk to find better-scoring variants.
+//! Uses incremental clique-count deltas for efficiency: O(n^2) per candidate
+//! edge for 4-clique deltas instead of O(n^4) full recount.
+//!
+//! The key insight: among valid R(k,l) graphs, the leaderboard score is
+//! dominated by 4-clique counts, then triangle balance. The tabu walk
+//! explores far more of the valid-graph neighborhood than a greedy
+//! hill-climb (500+ steps vs 3 steps).
 
 use std::collections::HashSet;
 
@@ -13,113 +17,284 @@ use extremal_scoring::automorphism::canonical_form;
 use extremal_scoring::clique::{NeighborSet, count_cliques, violation_delta};
 use extremal_types::GraphCid;
 use extremal_worker_api::{RawDiscovery, SearchObserver};
+use tracing::debug;
 
 /// Score tuple for comparing valid graphs: (max_4c, min_4c, max_3c, min_3c).
 /// Lower is better (golf-style, matching leaderboard ordering).
 type ValidScore = (u64, u64, u64, u64);
 
-fn score_valid_graph(adj_nbrs: &NeighborSet, comp_nbrs: &NeighborSet, n: u32) -> ValidScore {
-    let red_4 = count_cliques(adj_nbrs, 4, n);
-    let blue_4 = count_cliques(comp_nbrs, 4, n);
-    let red_3 = count_cliques(adj_nbrs, 3, n);
-    let blue_3 = count_cliques(comp_nbrs, 3, n);
-    (
-        red_4.max(blue_4),
-        red_4.min(blue_4),
-        red_3.max(blue_3),
-        red_3.min(blue_3),
-    )
+/// Absolute clique counts for incremental score tracking.
+struct ScoreState {
+    red_4: u64,
+    blue_4: u64,
+    red_3: u64,
+    blue_3: u64,
 }
 
-/// Polish a valid graph by hill-climbing on leaderboard score.
+impl ScoreState {
+    fn from_counts(adj_nbrs: &NeighborSet, comp_nbrs: &NeighborSet, n: u32) -> Self {
+        Self {
+            red_4: count_cliques(adj_nbrs, 4, n),
+            blue_4: count_cliques(comp_nbrs, 4, n),
+            red_3: count_cliques(adj_nbrs, 3, n),
+            blue_3: count_cliques(comp_nbrs, 3, n),
+        }
+    }
+
+    fn score_tuple(&self) -> ValidScore {
+        (
+            self.red_4.max(self.blue_4),
+            self.red_4.min(self.blue_4),
+            self.red_3.max(self.blue_3),
+            self.red_3.min(self.blue_3),
+        )
+    }
+
+    fn apply_delta(&mut self, d_red_4: i64, d_blue_4: i64, d_red_3: i64, d_blue_3: i64) {
+        self.red_4 = (self.red_4 as i64 + d_red_4).max(0) as u64;
+        self.blue_4 = (self.blue_4 as i64 + d_blue_4).max(0) as u64;
+        self.red_3 = (self.red_3 as i64 + d_red_3).max(0) as u64;
+        self.blue_3 = (self.blue_3 as i64 + d_blue_3).max(0) as u64;
+    }
+
+    fn predicted(&self, d_red_4: i64, d_blue_4: i64, d_red_3: i64, d_blue_3: i64) -> ValidScore {
+        let r4 = (self.red_4 as i64 + d_red_4).max(0) as u64;
+        let b4 = (self.blue_4 as i64 + d_blue_4).max(0) as u64;
+        let r3 = (self.red_3 as i64 + d_red_3).max(0) as u64;
+        let b3 = (self.blue_3 as i64 + d_blue_3).max(0) as u64;
+        (r4.max(b4), r4.min(b4), r3.max(b3), r3.min(b3))
+    }
+}
+
+/// Map edge (u, v) with u < v to a flat index.
+#[inline]
+fn edge_index(u: u32, v: u32, n: u32) -> usize {
+    let (u, v) = if u < v { (u, v) } else { (v, u) };
+    (u * n - u * (u + 1) / 2 + (v - u - 1)) as usize
+}
+
+/// Polish a valid graph via score-aware tabu walk.
 ///
-/// Tries all single-edge flips, keeping those that are still valid and
-/// have a better score. Repeats for `max_rounds` rounds. Reports every
-/// novel valid graph found along the way.
+/// Explores the valid-graph landscape by taking steps that maintain zero
+/// violations while optimizing the leaderboard score (4-cliques, then
+/// triangle balance). Uses a tabu list to escape score-local-optima.
 ///
+/// Reports every novel valid graph visited during the walk.
 /// Returns the best-scoring valid graph found (or None if no improvement).
+#[allow(clippy::too_many_arguments)]
 pub fn polish_valid_graph(
     graph: &AdjacencyMatrix,
     k: u32,
     ell: u32,
-    max_rounds: u32,
+    max_steps: u32,
+    tabu_tenure: u32,
     known_cids: &mut HashSet<GraphCid>,
     observer: &dyn SearchObserver,
     iteration: u64,
 ) -> Option<AdjacencyMatrix> {
+    if max_steps == 0 {
+        return None;
+    }
+
     let n = graph.n();
+    let edge_count = (n * (n - 1) / 2) as usize;
+
+    // Current graph state
     let mut current = graph.clone();
     let mut current_comp = current.complement();
     let mut adj_nbrs = NeighborSet::from_adj(&current);
     let mut comp_nbrs = NeighborSet::from_adj(&current_comp);
-    let mut current_score = score_valid_graph(&adj_nbrs, &comp_nbrs, n);
 
+    // Score tracking (absolute counts for incremental updates)
+    let mut score = ScoreState::from_counts(&adj_nbrs, &comp_nbrs, n);
+
+    // Best found
+    let mut best_graph = current.clone();
+    let mut best_score = score.score_tuple();
     let mut improved = false;
+    let mut novel_count: u32 = 0;
 
-    for _round in 0..max_rounds {
-        let mut best_flip: Option<(u32, u32, ValidScore)> = None;
+    // Tabu list: tabu_until[edge_index] = step when tabu expires
+    let mut tabu_until: Vec<u32> = vec![0; edge_count];
+
+    // Recount interval to correct incremental drift
+    let recount_interval: u32 = 100;
+
+    let mut steps_taken: u32 = 0;
+
+    for step in 1..=max_steps {
+        // Periodic full recount to correct drift
+        if step % recount_interval == 0 {
+            score = ScoreState::from_counts(&adj_nbrs, &comp_nbrs, n);
+        }
+
+        // Evaluate all edges for valid-preserving moves
+        // Track best non-tabu move and best aspiration move
+        let mut best_move: Option<(u32, u32, ValidScore, i64, i64, i64, i64)> = None;
+        let mut best_aspiration: Option<(u32, u32, ValidScore, i64, i64, i64, i64)> = None;
 
         for u in 0..n {
             for v in (u + 1)..n {
-                // Quick validity check via violation_delta
+                // Validity check: flip must preserve zero violations for target k,ell
                 let (dk, de) = violation_delta(&adj_nbrs, &comp_nbrs, k, ell, u, v);
-
-                // Current graph is valid (0 violations).
-                // After flip, violations = 0 + dk + de. Must stay at 0.
                 if dk + de != 0 {
                     continue;
                 }
 
-                // Flip, score, unflip
-                let cur = current.edge(u, v);
-                current.set_edge(u, v, !cur);
-                current_comp.set_edge(u, v, cur);
-                adj_nbrs.flip_edge(u, v);
-                comp_nbrs.flip_edge(u, v);
+                // Incremental score deltas via violation_delta with k=4 and k=3
+                let (d_red_4, d_blue_4) = violation_delta(&adj_nbrs, &comp_nbrs, 4, 4, u, v);
+                let (d_red_3, d_blue_3) = violation_delta(&adj_nbrs, &comp_nbrs, 3, 3, u, v);
 
-                let flip_score = score_valid_graph(&adj_nbrs, &comp_nbrs, n);
+                let predicted_tuple = score.predicted(d_red_4, d_blue_4, d_red_3, d_blue_3);
 
-                // Report this valid neighbor if novel
-                let (canonical, _) = canonical_form(&current);
-                let cid = extremal_graph::compute_cid(&canonical);
-                if known_cids.insert(cid) {
-                    observer.on_discovery(&RawDiscovery {
-                        graph: current.clone(),
-                        iteration,
-                    });
-                }
+                let eidx = edge_index(u, v, n);
+                let is_tabu = tabu_until[eidx] > step;
 
-                // Track best improvement
-                if flip_score < current_score {
-                    match &best_flip {
-                        Some((_, _, best_s)) if flip_score >= *best_s => {}
+                // Best non-tabu move
+                if !is_tabu {
+                    match &best_move {
+                        Some((_, _, s, _, _, _, _)) if predicted_tuple >= *s => {}
                         _ => {
-                            best_flip = Some((u, v, flip_score));
+                            best_move =
+                                Some((u, v, predicted_tuple, d_red_4, d_blue_4, d_red_3, d_blue_3));
                         }
                     }
                 }
 
-                // Unflip
-                current.set_edge(u, v, cur);
-                current_comp.set_edge(u, v, !cur);
-                adj_nbrs.flip_edge(u, v);
-                comp_nbrs.flip_edge(u, v);
+                // Aspiration: allow tabu if it beats best_score ever found
+                if predicted_tuple < best_score {
+                    match &best_aspiration {
+                        Some((_, _, s, _, _, _, _)) if predicted_tuple >= *s => {}
+                        _ => {
+                            best_aspiration =
+                                Some((u, v, predicted_tuple, d_red_4, d_blue_4, d_red_3, d_blue_3));
+                        }
+                    }
+                }
             }
         }
 
-        // Apply best flip for this round
-        if let Some((u, v, new_score)) = best_flip {
-            let cur = current.edge(u, v);
-            current.set_edge(u, v, !cur);
-            current_comp.set_edge(u, v, cur);
-            adj_nbrs.flip_edge(u, v);
-            comp_nbrs.flip_edge(u, v);
-            current_score = new_score;
+        // Choose: aspiration wins if it's better than best non-tabu
+        let chosen = match (best_aspiration, best_move) {
+            (Some(asp), Some(reg)) => {
+                if asp.2 < reg.2 {
+                    asp
+                } else {
+                    reg
+                }
+            }
+            (Some(asp), None) => asp,
+            (None, Some(reg)) => reg,
+            (None, None) => break, // No valid-preserving moves available
+        };
+
+        let (u, v, new_tuple, d_r4, d_b4, d_r3, d_b3) = chosen;
+
+        // Apply flip
+        let cur = current.edge(u, v);
+        current.set_edge(u, v, !cur);
+        current_comp.set_edge(u, v, cur);
+        adj_nbrs.flip_edge(u, v);
+        comp_nbrs.flip_edge(u, v);
+
+        // Update score state
+        score.apply_delta(d_r4, d_b4, d_r3, d_b3);
+
+        // Update tabu
+        let eidx = edge_index(u, v, n);
+        tabu_until[eidx] = step + tabu_tenure;
+
+        steps_taken = step;
+
+        // Report if novel (canonical form + CID dedup)
+        let (canonical, _) = canonical_form(&current);
+        let cid = extremal_graph::compute_cid(&canonical);
+        if known_cids.insert(cid) {
+            observer.on_discovery(&RawDiscovery {
+                graph: current.clone(),
+                iteration,
+            });
+            novel_count += 1;
+        }
+
+        // Track best
+        if new_tuple < best_score {
+            best_graph = current.clone();
+            best_score = new_tuple;
             improved = true;
-        } else {
-            break; // Local optimum reached
         }
     }
 
-    if improved { Some(current) } else { None }
+    debug!(
+        steps = steps_taken,
+        novel = novel_count,
+        improved,
+        best_4c_max = best_score.0,
+        best_4c_min = best_score.1,
+        best_3c_max = best_score.2,
+        best_3c_min = best_score.3,
+        "polish: tabu walk complete"
+    );
+
+    if improved { Some(best_graph) } else { None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::init::paley_graph;
+    use extremal_worker_api::CollectingObserver;
+
+    #[test]
+    fn polish_preserves_validity() {
+        // Start from Paley(17) which is valid for R(4,4)
+        let graph = paley_graph(17);
+        let mut known_cids = HashSet::new();
+        let observer = CollectingObserver::new();
+
+        // Add original CID
+        let (canonical, _) = canonical_form(&graph);
+        let cid = extremal_graph::compute_cid(&canonical);
+        known_cids.insert(cid);
+
+        let result = polish_valid_graph(&graph, 4, 4, 100, 15, &mut known_cids, &observer, 0);
+
+        // If polish returned an improved graph, verify it's still valid
+        if let Some(polished) = &result {
+            let adj = NeighborSet::from_adj(polished);
+            let comp = NeighborSet::from_adj(&polished.complement());
+            let kc = count_cliques(&adj, 4, 17);
+            let ei = count_cliques(&comp, 4, 17);
+            assert_eq!(kc + ei, 0, "polished graph must remain valid for R(4,4)");
+
+            // Score should be <= original
+            let orig_adj = NeighborSet::from_adj(&graph);
+            let orig_comp = NeighborSet::from_adj(&graph.complement());
+            let orig_score = ScoreState::from_counts(&orig_adj, &orig_comp, 17);
+            let pol_score = ScoreState::from_counts(&adj, &comp, 17);
+
+            assert!(
+                pol_score.score_tuple() <= orig_score.score_tuple(),
+                "polished score should be <= original"
+            );
+        }
+
+        // All discovered graphs must also be valid
+        for discovery in observer.drain() {
+            let adj = NeighborSet::from_adj(&discovery.graph);
+            let comp = NeighborSet::from_adj(&discovery.graph.complement());
+            let kc = count_cliques(&adj, 4, 17);
+            let ei = count_cliques(&comp, 4, 17);
+            assert_eq!(kc + ei, 0, "discovered graph must be valid for R(4,4)");
+        }
+    }
+
+    #[test]
+    fn polish_zero_steps_returns_none() {
+        let graph = paley_graph(5);
+        let mut known_cids = HashSet::new();
+        let observer = CollectingObserver::new();
+        let result = polish_valid_graph(&graph, 3, 3, 0, 10, &mut known_cids, &observer, 0);
+        assert!(result.is_none());
+    }
 }

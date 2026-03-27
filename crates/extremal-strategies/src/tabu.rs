@@ -16,7 +16,8 @@
 //!
 //! - `tabu_tenure` (int, default 50): iterations an edge stays tabu
 //! - `focused` (bool, default false): restrict flips to guilty edges
-//! - `polish_rounds` (int, default 3): polish iterations per valid graph
+//! - `polish_max_steps` (int, default 500): tabu walk steps per valid graph
+//! - `polish_tabu_tenure` (int, default 25): edge tabu tenure during polish
 //! - `target_k` (int, default 5): clique size in graph
 //! - `target_ell` (int, default 5): clique size in complement
 
@@ -63,11 +64,19 @@ impl SearchStrategy for TabuSearch {
                 adjustable: true,
             },
             ConfigParam {
-                name: "polish_rounds".into(),
-                label: "Polish Rounds".into(),
-                description: "Score-optimization rounds per valid graph found".into(),
-                param_type: ParamType::Int { min: 0, max: 10 },
-                default: serde_json::json!(3),
+                name: "polish_max_steps".into(),
+                label: "Polish Max Steps".into(),
+                description: "Maximum steps in score-aware tabu polish walk".into(),
+                param_type: ParamType::Int { min: 0, max: 5_000 },
+                default: serde_json::json!(500),
+                adjustable: true,
+            },
+            ConfigParam {
+                name: "polish_tabu_tenure".into(),
+                label: "Polish Tabu Tenure".into(),
+                description: "Steps an edge stays tabu during polish".into(),
+                param_type: ParamType::Int { min: 5, max: 100 },
+                default: serde_json::json!(25),
                 adjustable: true,
             },
             ConfigParam {
@@ -100,11 +109,16 @@ impl SearchStrategy for TabuSearch {
             .get("focused")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let polish_rounds = job
+        let polish_max_steps = job
             .config
-            .get("polish_rounds")
+            .get("polish_max_steps")
             .and_then(|v| v.as_u64())
-            .unwrap_or(3) as u32;
+            .unwrap_or(500) as u32;
+        let polish_tabu_tenure = job
+            .config
+            .get("polish_tabu_tenure")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(25) as u32;
         let k = job
             .config
             .get("target_k")
@@ -167,12 +181,13 @@ impl SearchStrategy for TabuSearch {
                 best_valid = Some(graph.clone());
             }
             // Polish the seed
-            if polish_rounds > 0
+            if polish_max_steps > 0
                 && let Some(polished) = crate::polish::polish_valid_graph(
                     &graph,
                     k,
                     ell,
-                    polish_rounds,
+                    polish_max_steps,
+                    polish_tabu_tenure,
                     &mut known_cids,
                     observer,
                     0,
@@ -319,12 +334,13 @@ impl SearchStrategy for TabuSearch {
                     }
 
                     // Polish
-                    if polish_rounds > 0
+                    if polish_max_steps > 0
                         && let Some(polished) = crate::polish::polish_valid_graph(
                             &graph,
                             k,
                             ell,
-                            polish_rounds,
+                            polish_max_steps,
+                            polish_tabu_tenure,
                             &mut known_cids,
                             observer,
                             iter,
