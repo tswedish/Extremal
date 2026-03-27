@@ -19,6 +19,57 @@ Before starting, read these files to understand current state:
 3. `experiments/agent/journal.md` — Recent experiment history and outcomes
 4. `CLAUDE.md` — Full architecture and scoring system docs
 
+### Server data for analysis
+
+The server stores a full score history with submission metadata. Use these APIs to analyze what's working:
+
+```bash
+# Leaderboard with scores (graph6, histogram, goodman_gap, aut_order)
+curl -sf https://api.extremal.online/api/leaderboards/25?limit=50
+
+# Score history — time-series of leaderboard quality over time
+# Returns: t, count, best_gap, worst_gap, median_gap, avg_gap, best_aut, avg_aut
+curl -sf https://api.extremal.online/api/leaderboards/25/history?limit=50
+# Filter by date:
+curl -sf "https://api.extremal.online/api/leaderboards/25/history?since=2026-03-26T00:00:00Z"
+
+# Submission history for our key (includes metadata: worker_id, commit, strategy params)
+curl -sf https://api.extremal.online/api/keys/da8d7f22fe695511/submissions?limit=100
+
+# Individual submission detail (full score breakdown)
+curl -sf https://api.extremal.online/api/submissions/{cid}
+
+# Export full leaderboard as graph6 (for bulk analysis)
+curl -sf https://api.extremal.online/api/leaderboards/25/export
+
+# Export as CSV (rank, cid, graph6, goodman_gap, aut_order, key_id, admitted_at)
+curl -sf https://api.extremal.online/api/leaderboards/25/export/csv
+
+# Score a graph locally without submitting
+cargo run -p extremal-cli -- score --n 25 --graph6 '<graph6_string>'
+```
+
+**Score history** is especially valuable for research. It shows how leaderboard quality evolves over time:
+- `best_gap` / `avg_gap` / `worst_gap` — Goodman gap trend (lower = better triangle balance)
+- `best_aut` / `avg_aut` — automorphism order trend (higher = more symmetric)
+- Plateaus in these metrics signal that the current strategy has hit its ceiling
+- Improvements after a code change confirm the change had impact
+- Use `?since=` to compare before/after a specific commit or experiment
+
+**Submission metadata** is attached to every graph submitted by workers. Currently includes `worker_id`, `commit`, and `started`. This is valuable for:
+- **Attribution**: Which worker config produced which top-scoring graphs?
+- **A/B analysis**: Compare score distributions between commits or worker configs
+- **Provenance**: Trace a top graph back to the strategy/params that found it
+
+Consider enriching metadata in future strategies to include:
+- `strategy_id` — which strategy found the graph (tree2, tabu, etc.)
+- `polish_steps_used` — how many polish steps were taken for this graph
+- `seed_cid` — CID of the leaderboard graph used as seed (tracks lineage)
+- `round` — which round of the worker produced this graph
+- `violations_at_discovery` — was the graph found with 0 violations, or polished to 0?
+
+This lets the research agent ask questions like "do graphs seeded from top-10 entries produce better offspring?" or "does the tabu strategy find structurally different graphs than tree2?"
+
 ## Process
 
 ### 1. Assess

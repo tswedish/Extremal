@@ -68,13 +68,28 @@ The registry is shared between the experiment skill and the strategy-research sk
 **For deeper analysis**, also query:
 ```bash
 # Admission threshold (hex score bytes)
-curl -sf http://localhost:3001/api/leaderboards/25/threshold
+curl -sf https://api.extremal.online/api/leaderboards/25/threshold
 
 # Specific worker config (shows adjustable params)
 curl -sf http://localhost:$PORT/api/config
 
 # Full leaderboard snapshot
 ./scripts/agent-snapshot.sh 25
+
+# Score history — leaderboard quality over time (best/avg/worst gap, aut)
+curl -sf https://api.extremal.online/api/leaderboards/25/history?limit=20
+# Since a specific time:
+curl -sf "https://api.extremal.online/api/leaderboards/25/history?since=2026-03-26T00:00:00Z"
+
+# Submission history with metadata (worker_id, commit, strategy params)
+curl -sf https://api.extremal.online/api/keys/da8d7f22fe695511/submissions?limit=50
+
+# Individual submission detail
+curl -sf https://api.extremal.online/api/submissions/{cid}
+
+# Export leaderboard as CSV or graph6 (for bulk analysis)
+curl -sf https://api.extremal.online/api/leaderboards/25/export/csv
+curl -sf https://api.extremal.online/api/leaderboards/25/export
 ```
 
 ### Key metrics to extract
@@ -89,6 +104,7 @@ curl -sf http://localhost:$PORT/api/config
 2. **Worker comparison**: which config has highest admit rate per minute?
 3. **Score frontier**: compare snapshots — is top score improving?
 4. **Round time budget**: polish_max_steps dominates round time when many valid graphs are found
+5. **Score history trend**: query `/api/leaderboards/25/history` to see if `avg_gap` and `best_gap` are still improving or have plateaued. A flat `avg_gap` over several snapshots signals the current strategy has hit its ceiling — time to signal the orchestrator for research.
 
 ### Lessons learned
 - **First round is always slow** (~2min) because it starts from Paley seed with 100K iters. Subsequent rounds are faster (seeded from leaderboard).
