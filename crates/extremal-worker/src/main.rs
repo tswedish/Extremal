@@ -102,6 +102,14 @@ struct Cli {
     /// Score-bias threshold: prefer balanced kc/ei in beam when violations <= this.
     #[arg(long, default_value = "3")]
     score_bias_threshold: u64,
+
+    /// ILS restarts: perturbation+re-polish cycles per valid graph (0 = disabled).
+    #[arg(long, default_value = "0")]
+    polish_ils_restarts: u64,
+
+    /// ILS perturbation edges: random valid-preserving flips between polish walks.
+    #[arg(long, default_value = "3")]
+    polish_ils_perturb: u64,
 }
 
 #[tokio::main]
@@ -159,6 +167,8 @@ async fn main() {
         "polish_max_steps": cli.polish_max_steps,
         "polish_tabu_tenure": cli.polish_tabu_tenure,
         "score_bias_threshold": cli.score_bias_threshold,
+        "polish_ils_restarts": cli.polish_ils_restarts,
+        "polish_ils_perturb": cli.polish_ils_perturb,
     });
 
     // Parse metadata JSON

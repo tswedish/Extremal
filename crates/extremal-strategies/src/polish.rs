@@ -17,6 +17,8 @@ use extremal_scoring::automorphism::canonical_form;
 use extremal_scoring::clique::{NeighborSet, count_cliques, violation_delta};
 use extremal_types::GraphCid;
 use extremal_worker_api::{RawDiscovery, SearchObserver};
+use rand::Rng;
+use rand::seq::SliceRandom;
 use tracing::debug;
 
 /// Score tuple for comparing valid graphs: (max_4c, min_4c, max_3c, min_3c).
@@ -239,6 +241,162 @@ pub fn polish_valid_graph(
     if improved { Some(best_graph) } else { None }
 }
 
+/// Compute the score tuple for a valid graph (for comparison between ILS restarts).
+fn score_valid_graph(graph: &AdjacencyMatrix, n: u32) -> ValidScore {
+    let adj_nbrs = NeighborSet::from_adj(graph);
+    let comp = graph.complement();
+    let comp_nbrs = NeighborSet::from_adj(&comp);
+    ScoreState::from_counts(&adj_nbrs, &comp_nbrs, n).score_tuple()
+}
+
+/// Perturb a valid graph by flipping random validity-preserving edges.
+///
+/// Finds edges where flipping maintains zero violations, picks `num_flips`
+/// at random, applying each sequentially (re-evaluating valid edges after each flip).
+fn perturb_valid(
+    graph: &AdjacencyMatrix,
+    k: u32,
+    ell: u32,
+    num_flips: u32,
+    rng: &mut impl Rng,
+) -> AdjacencyMatrix {
+    let n = graph.n();
+    let mut result = graph.clone();
+    let mut comp = result.complement();
+    let mut adj_nbrs = NeighborSet::from_adj(&result);
+    let mut comp_nbrs = NeighborSet::from_adj(&comp);
+
+    for _ in 0..num_flips {
+        // Collect all valid-preserving edges (re-evaluate after each flip)
+        let mut valid_edges: Vec<(u32, u32)> = Vec::new();
+        for u in 0..n {
+            for v in (u + 1)..n {
+                let (dk, de) = violation_delta(&adj_nbrs, &comp_nbrs, k, ell, u, v);
+                if dk + de == 0 {
+                    valid_edges.push((u, v));
+                }
+            }
+        }
+
+        if valid_edges.is_empty() {
+            break;
+        }
+
+        let &(u, v) = valid_edges.choose(rng).unwrap();
+        let cur = result.edge(u, v);
+        result.set_edge(u, v, !cur);
+        comp.set_edge(u, v, cur);
+        adj_nbrs.flip_edge(u, v);
+        comp_nbrs.flip_edge(u, v);
+    }
+
+    result
+}
+
+/// Iterated Local Search polish: repeated polish walks separated by perturbations.
+///
+/// Chains multiple polish walks from different perturbations of a valid graph,
+/// exploring more of the valid-graph landscape than a single walk. Each cycle:
+/// 1. Polish (tabu walk) → find local optimum
+/// 2. Perturb (random valid-preserving flips) → escape basin
+/// 3. Repeat
+///
+/// Returns the best graph found across all walks, or None if no improvement
+/// over the input.
+#[allow(clippy::too_many_arguments)]
+pub fn ils_polish(
+    graph: &AdjacencyMatrix,
+    k: u32,
+    ell: u32,
+    max_steps: u32,
+    tabu_tenure: u32,
+    restarts: u32,
+    perturb_edges: u32,
+    known_cids: &mut HashSet<GraphCid>,
+    observer: &dyn SearchObserver,
+    iteration: u64,
+    rng: &mut impl Rng,
+) -> Option<AdjacencyMatrix> {
+    // No restarts: fall back to single polish walk
+    if restarts == 0 {
+        return polish_valid_graph(
+            graph,
+            k,
+            ell,
+            max_steps,
+            tabu_tenure,
+            known_cids,
+            observer,
+            iteration,
+        );
+    }
+
+    let n = graph.n();
+    let input_score = score_valid_graph(graph, n);
+
+    // Initial polish walk
+    let initial_result = polish_valid_graph(
+        graph,
+        k,
+        ell,
+        max_steps,
+        tabu_tenure,
+        known_cids,
+        observer,
+        iteration,
+    );
+
+    let mut current = initial_result.as_ref().unwrap_or(graph).clone();
+    let mut best_graph: Option<AdjacencyMatrix> = None;
+    let mut best_score = input_score;
+
+    if let Some(ref polished) = initial_result {
+        let polished_score = score_valid_graph(polished, n);
+        if polished_score < best_score {
+            best_score = polished_score;
+            best_graph = Some(polished.clone());
+        }
+    }
+
+    // ILS restart loop
+    for _restart in 0..restarts {
+        let perturbed = perturb_valid(&current, k, ell, perturb_edges, rng);
+
+        let polish_result = polish_valid_graph(
+            &perturbed,
+            k,
+            ell,
+            max_steps,
+            tabu_tenure,
+            known_cids,
+            observer,
+            iteration,
+        );
+
+        let local_opt = polish_result.as_ref().unwrap_or(&perturbed);
+        let local_score = score_valid_graph(local_opt, n);
+
+        if local_score < best_score {
+            best_score = local_score;
+            best_graph = Some(local_opt.clone());
+        }
+
+        // Move to new local optimum for next perturbation (standard ILS)
+        current = local_opt.clone();
+    }
+
+    debug!(
+        restarts,
+        perturb_edges,
+        improved = best_graph.is_some(),
+        best_4c_max = best_score.0,
+        best_3c_max = best_score.2,
+        "ils_polish: complete"
+    );
+
+    best_graph
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +454,80 @@ mod tests {
         let observer = CollectingObserver::new();
         let result = polish_valid_graph(&graph, 3, 3, 0, 10, &mut known_cids, &observer, 0);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn ils_polish_preserves_validity() {
+        use rand::SeedableRng;
+        use rand::rngs::SmallRng;
+
+        let graph = paley_graph(17);
+        let mut known_cids = HashSet::new();
+        let observer = CollectingObserver::new();
+        let mut rng = SmallRng::seed_from_u64(42);
+
+        let (canonical, _) = canonical_form(&graph);
+        let cid = extremal_graph::compute_cid(&canonical);
+        known_cids.insert(cid);
+
+        let result = ils_polish(
+            &graph,
+            4,
+            4,
+            50,
+            15,
+            3, // restarts
+            3, // perturb edges
+            &mut known_cids,
+            &observer,
+            0,
+            &mut rng,
+        );
+
+        // If improved, verify validity
+        if let Some(polished) = &result {
+            let adj = NeighborSet::from_adj(polished);
+            let comp = NeighborSet::from_adj(&polished.complement());
+            let kc = count_cliques(&adj, 4, 17);
+            let ei = count_cliques(&comp, 4, 17);
+            assert_eq!(
+                kc + ei,
+                0,
+                "ILS-polished graph must remain valid for R(4,4)"
+            );
+        }
+
+        // All discovered graphs must be valid
+        for discovery in observer.drain() {
+            let adj = NeighborSet::from_adj(&discovery.graph);
+            let comp = NeighborSet::from_adj(&discovery.graph.complement());
+            let kc = count_cliques(&adj, 4, 17);
+            let ei = count_cliques(&comp, 4, 17);
+            assert_eq!(kc + ei, 0, "ILS-discovered graph must be valid for R(4,4)");
+        }
+    }
+
+    #[test]
+    fn ils_zero_restarts_matches_single_polish() {
+        use rand::SeedableRng;
+        use rand::rngs::SmallRng;
+
+        let graph = paley_graph(17);
+        let mut rng = SmallRng::seed_from_u64(99);
+
+        let mut cids1 = HashSet::new();
+        let obs1 = CollectingObserver::new();
+        let (canonical, _) = canonical_form(&graph);
+        let cid = extremal_graph::compute_cid(&canonical);
+        cids1.insert(cid);
+        let r1 = polish_valid_graph(&graph, 4, 4, 50, 15, &mut cids1, &obs1, 0);
+
+        let mut cids2 = HashSet::new();
+        let obs2 = CollectingObserver::new();
+        cids2.insert(cid);
+        let r2 = ils_polish(&graph, 4, 4, 50, 15, 0, 3, &mut cids2, &obs2, 0, &mut rng);
+
+        // Both should produce the same result (restarts=0 delegates to polish_valid_graph)
+        assert_eq!(r1.is_some(), r2.is_some());
     }
 }

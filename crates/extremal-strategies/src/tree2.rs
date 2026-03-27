@@ -158,6 +158,22 @@ impl SearchStrategy for Tree2Search {
                 default: serde_json::json!(3),
                 adjustable: true,
             },
+            ConfigParam {
+                name: "polish_ils_restarts".into(),
+                label: "Polish ILS Restarts".into(),
+                description: "Perturbation+re-polish cycles per valid graph (0=disabled)".into(),
+                param_type: ParamType::Int { min: 0, max: 20 },
+                default: serde_json::json!(0),
+                adjustable: true,
+            },
+            ConfigParam {
+                name: "polish_ils_perturb".into(),
+                label: "Polish ILS Perturb Edges".into(),
+                description: "Random valid-preserving edge flips between polish walks".into(),
+                param_type: ParamType::Int { min: 1, max: 20 },
+                default: serde_json::json!(3),
+                adjustable: true,
+            },
         ]
     }
 
@@ -202,6 +218,16 @@ impl SearchStrategy for Tree2Search {
             .get("score_bias_threshold")
             .and_then(|v| v.as_u64())
             .unwrap_or(3);
+        let polish_ils_restarts = job
+            .config
+            .get("polish_ils_restarts")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let polish_ils_perturb = job
+            .config
+            .get("polish_ils_perturb")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3) as u32;
 
         let n = job.n;
         let max_iters = job.max_iters;
@@ -380,16 +406,19 @@ impl SearchStrategy for Tree2Search {
                                 best_valid = Some(valid_graph.clone());
                             }
 
-                            // Polish: tabu walk on score within valid neighborhood
-                            if let Some(polished) = crate::polish::polish_valid_graph(
+                            // Polish: ILS with perturbation cycles (or single walk if restarts=0)
+                            if let Some(polished) = crate::polish::ils_polish(
                                 &valid_graph,
                                 k,
                                 ell,
                                 polish_max_steps,
                                 polish_tabu_tenure,
+                                polish_ils_restarts,
+                                polish_ils_perturb,
                                 &mut known_cids,
                                 observer,
                                 iters_used,
+                                &mut rng,
                             ) {
                                 discovery_count += 1;
                                 best_valid = Some(polished);
