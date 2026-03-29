@@ -125,10 +125,10 @@ pub async fn get_cids(
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
     // Only cache full syncs (no `since` param) — incremental syncs are cheap
-    if since.is_none() {
-        if let Some(cids) = state.cache.get_cids(n).await {
-            return Ok(Json(json!({ "cids": cids })));
-        }
+    if since.is_none()
+        && let Some(cids) = state.cache.get_cids(n).await
+    {
+        return Ok(Json(json!({ "cids": cids })));
     }
 
     let cids = state.store.get_leaderboard_cids(n, since).await?;

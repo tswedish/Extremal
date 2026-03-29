@@ -52,6 +52,12 @@ pub struct LeaderboardCache {
     graphs: RwLock<HashMap<(i32, i64, i64), CacheEntry<GraphEntry>>>,
 }
 
+impl Default for LeaderboardCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LeaderboardCache {
     pub fn new() -> Self {
         Self {
