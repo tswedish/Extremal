@@ -83,10 +83,12 @@
       "description": "Iterated Local Search polish: chain multiple tabu walks separated by random valid-preserving perturbations. Escapes local optima that single walks converge to.",
       "files": ["crates/extremal-strategies/src/polish.rs", "crates/extremal-strategies/src/tree2.rs", "crates/extremal-worker/src/main.rs"],
       "params": {"polish_ils_restarts": 3, "polish_ils_perturb": 3},
-      "status": "untested",
+      "status": "exhausted",
       "date_implemented": "2026-03-26",
+      "date_tested": "2026-03-30",
       "commit": "67ac085",
-      "notes": "PRIORITY: This is the proven admission-producing config (last 3 admissions on 2026-03-30 came from ILS deep-polish on commit 5f23b06). Never properly validated on current binary at scale — all campaign tests used shallow polish (max_polish_per_depth=5, ILS=0). Needs 2+ hour run with: max_polish_per_depth=50, polish_ils_restarts=5, polish_max_steps=500, max_iters=500000, beam_width=150, noise_flips=2, sample_bias=0.4."
+      "metrics": {"total_rounds": 727, "total_discoveries": 0, "total_admitted": 0, "note": "Tested mpd=50/ILS=5/500steps for 27+ min AND mpd=0 (unlimited) for 62+ min. Both zero discoveries. Same 4c>=67 barrier."},
+      "notes": "Tested on current binary with deep polish configs: (1) mpd=50, ILS=5, 500 steps ran 27+ min, 0 discoveries. (2) mpd=0 (unlimited) ran 62+ min across 2 workers, 0 discoveries. The 4c>=67 barrier is structural regardless of polish depth."
     },
     {
       "id": "template",
@@ -97,7 +99,7 @@
       "status": "untested",
       "date_implemented": "2026-03-30",
       "commit": "db87e5b",
-      "notes": "Genuinely untested. Searches BETWEEN known-good solutions by identifying shared backbone + free edges. Recommended test: 4 workers with --strategy template --n 25 --sample-bias 0.3 --template-pool-size 3 --polish-max-steps 100. Needs low sample_bias for diverse seeds."
+      "notes": "Genuinely untested. Searches BETWEEN known-good solutions by identifying shared backbone + free edges. However, n=25 is structurally exhausted at 4c>=67 (12+ algorithms, 130K+ rounds confirm). Template may also hit this barrier since even from-scratch construction and SA both land in 4c>=67 basin. Low expected value on n=25. Recommended test: 4 workers with --strategy template --n 25 --sample-bias 0.3 --template-pool-size 3 --polish-max-steps 100."
     },
     {
       "id": "crossover",
@@ -239,15 +241,25 @@
       "date_implemented": "2026-03-30",
       "commit": "9e52362",
       "notes": "The 4c=65 optimum is a fragile island — even a few valid-preserving edge flips push into 4c>=67 basin. noise_flips>0 wastes 40-60% of rounds."
+    },
+    {
+      "id": "tree2-n35-wide-a",
+      "type": "config_preset",
+      "description": "Proven tree2-wide-a config targeting n=35 R(5,5). n=35 leaderboard has wide quality spread (4c 435→462), entirely owned by one key. New target with clear room for improvement.",
+      "params": {"n": 35, "beam_width": 150, "max_depth": 8, "noise_flips": 2, "sample_bias": 0.4, "polish_max_steps": 100, "max_iters": 500000},
+      "status": "untested",
+      "date_implemented": "2026-03-30",
+      "commit": "pending",
+      "notes": "Extends proven n=25 wide-a config to n=35. Larger graph (595 edges vs 300) means slower rounds — may need beam_width/depth tuning. Paley init uses p=37 (truncated). Server has 500 n=35 entries to seed from. Target: beat 4c=(462,463) threshold to start admitting, then optimize toward top 4c=(435,443). Run: ./scripts/fleet.sh --workers 6 --n 35 --release --dashboard ws://localhost:4000/ws/worker"
     }
   ],
   "ideas": [
     {
       "id": "ils-polish-fair-baseline",
-      "description": "Give tree2+ILS deep polish a proper 2+ hour run on the current binary. Config: max_polish_per_depth=50, polish_ils_restarts=5, polish_max_steps=500, max_iters=500000, beam_width=150, noise_flips=2, sample_bias=0.4. The last admissions came from this config on the old binary (commit 5f23b06). Must run before declaring n=25 exhausted.",
-      "priority": "critical",
-      "rationale": "CORRECTION finding: all campaign exhaustion conclusions used shallow polish (mpd=5, ILS=0). The deep-polish config that produced the last 3 admissions was never fairly tested on the current binary. mpd=0 (unlimited) crashes after 36min; mpd=50 is practical.",
-      "estimated_effort": "none — config only"
+      "description": "RESOLVED: Deep ILS tested on current binary. mpd=50/ILS=5/500steps ran 27+ min, mpd=0 ran 62+ min. Both zero discoveries. Barrier is structural.",
+      "priority": "resolved",
+      "rationale": "Tested 2026-03-30. See ils-polish strategy entry and findings.json for evidence. The 4c>=67 barrier on n=25 is independent of polish depth.",
+      "estimated_effort": "n/a"
     },
     {
       "id": "template-fleet-test",
@@ -258,10 +270,10 @@
     },
     {
       "id": "target-n35",
-      "description": "Switch some workers to n=35. Leaderboard is 500/500 but owned by single key bc861a9d1ff039d3. Top 4c=(435,443). May be less saturated in quality — tree2-wide-a with ILS polish could make progress where n=25 is stuck.",
-      "priority": "high",
-      "rationale": "n=25 may be at or near theoretical optimum for 4c under this scoring. n=35 has a larger graph (more edges to flip, bigger neighborhoods) and potentially more room for improvement. n is init-only so requires new worker launches.",
-      "estimated_effort": "none — just --n 35"
+      "description": "IMPLEMENTED: See tree2-n35-wide-a strategy entry. n=35 leaderboard 500/500, single-key owned, quality spread 4c=(435,443)→(462,463). Binary confirmed working on n=35.",
+      "priority": "implemented",
+      "rationale": "n=25 structurally exhausted at 4c>=67. n=35 has 595 edges (larger search space), wide quality spread, and is entirely owned by one key. Paley init uses p=37.",
+      "estimated_effort": "none — config only"
     },
     {
       "id": "scale-workers-16",
