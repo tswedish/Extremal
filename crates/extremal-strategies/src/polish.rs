@@ -208,22 +208,26 @@ pub fn polish_valid_graph(
 
         steps_taken = step;
 
-        // Report if novel (canonical form + CID dedup)
-        let (canonical, _) = canonical_form(&current);
-        let cid = extremal_graph::compute_cid(&canonical);
-        if known_cids.insert(cid) {
-            observer.on_discovery(&RawDiscovery {
-                graph: current.clone(),
-                iteration,
-            });
-            novel_count += 1;
-        }
-
         // Track best
-        if new_tuple < best_score {
+        let score_improved = new_tuple < best_score;
+        if score_improved {
             best_graph = current.clone();
             best_score = new_tuple;
             improved = true;
+        }
+
+        // Report novel graphs (canonical form + CID dedup).
+        // Only canonicalize when score improved or periodically — nauty is expensive.
+        if score_improved || step % 20 == 0 {
+            let (canonical, _) = canonical_form(&current);
+            let cid = extremal_graph::compute_cid(&canonical);
+            if known_cids.insert(cid) {
+                observer.on_discovery(&RawDiscovery {
+                    graph: current.clone(),
+                    iteration,
+                });
+                novel_count += 1;
+            }
         }
     }
 

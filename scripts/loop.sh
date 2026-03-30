@@ -34,7 +34,7 @@ BUDGET="1.50"
 MODEL="opus"
 LAUNCH_FLEET=true
 FLEET_PIDS=""
-CLAUDE_TIMEOUT=900  # 15 min max per claude invocation
+CLAUDE_TIMEOUT=1200  # 20 min max per claude invocation
 
 # ── Parse args ───────────────────────────────────────────
 while [[ $# -gt 0 ]]; do

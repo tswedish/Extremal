@@ -794,7 +794,13 @@ pub async fn run_engine(
         let mut dash_discoveries_sent: usize = 0;
         const MAX_DASH_DISCOVERIES_PER_ROUND: usize = 20;
 
-        for discovery in &raw_discoveries {
+        // Cap post-search scoring to avoid spending more time scoring than searching.
+        // With polish capped at 5/depth, we still get thousands of raw discoveries
+        // from the beam search itself — most will be threshold-gated anyway.
+        const MAX_SCORE_PER_ROUND: usize = 200;
+        let scoring_limit = raw_discoveries.len().min(MAX_SCORE_PER_ROUND);
+
+        for discovery in &raw_discoveries[..scoring_limit] {
             // Canonical form + aut_order
             let (canonical, aut_order) = canonical_form(&discovery.graph);
             let canonical_g6 = graph6::encode(&canonical);

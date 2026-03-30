@@ -60,6 +60,26 @@ The operator can drop `.md` files here to send you messages between cycles. If y
 includes an "Operator Messages" section, address those messages FIRST in your response and
 actions. The orchestrator moves processed files to `inbox/processed/` automatically.
 
+**IMPORTANT: Inbox messages are one-shot.** You only see each message once — future cycles
+have no memory of it. When you receive an inbox message:
+1. **Read and understand** the operator's intent
+2. **Synthesize** your own judgment — do you agree? What's actionable? What needs nuance?
+3. **Write a finding** to `experiments/agent/findings.json` capturing your synthesis (not
+   a copy of the message, but your informed take on it)
+4. **Act** on whatever is immediately actionable
+5. **Report** in your cycle output what you learned and what you persisted
+
+### Findings (`experiments/agent/findings.json`)
+
+This is your persistent memory across cycles. Read it at the start of each cycle to maintain
+context. Write to it when you learn something that should inform future decisions.
+
+**When to read**: Every cycle. Skim for entries relevant to current fleet state.
+**When to write**: After inbox messages, after experiments confirm/refute a hypothesis,
+after discovering a surprising result.
+**What to write**: Synthesized knowledge, not raw data. "beam_width=200 outperformed 100
+by 3x on discovery rate in the first 20 minutes" — not a copy of log lines.
+
 ### Strategy Registry (`strategies.json`)
 
 The registry is shared between the experiment skill and the strategy-research skill:
@@ -134,9 +154,24 @@ curl -sf https://api.extremal.online/api/leaderboards/25/export
 - **Polish debug logs require RUST_LOG=debug** — at info level, use worker HTTP API `/api/status` for metrics instead.
 - **Dashboard shows only 1 worker per worker_id** — always use unique worker_ids in metadata.
 - **Threshold gating is aggressive on full leaderboards** — hundreds of thousands of graphs skipped. This is normal and expected.
-- **Use direct HTTP API for config changes, NOT the CLI `workers set` command** — the CLI discovers workers via relay and times out. Instead: `curl -sf -X POST http://localhost:$PORT/api/config -H "Content-Type: application/json" -d '{"param": value}'`
+- **Use direct HTTP API for config changes, NOT the CLI `workers set` command** — the CLI discovers workers via relay and times out. Instead: `curl -sf --max-time 10 -X POST http://localhost:$PORT/api/config -H "Content-Type: application/json" -d '{"param": value}'`
+- **ALWAYS use `--max-time 10` on ALL curl calls to worker APIs** — config/status/pause/resume endpoints block until the current round finishes, which can be 5-20+ minutes with ILS. The config is queued server-side even if curl times out, so do NOT retry or wait.
 - **Worker API ports** are in the agent-status.sh output, or query: `curl -sf http://localhost:4000/api/workers`
 - **beam_width=150 + noise_flips=2 + sample_bias=0.4** was the clear winner in production experiments (19 admits/min vs 0.2-6.7 for other configs).
+
+**Tuning (post polish-optimization 2026-03-30):**
+- Rounds are now ~170x faster due to polish capping (5 walks/depth) and deferred canonical_form.
+- **Increase search params** to maximize productive search vs per-round overhead: `max_iters=500000`, `beam_width=150`, `max_depth=15`. At 100k iters, only ~35% of wall time is actual search.
+- `max_polish_per_depth` defaults to 5 (adjustable at runtime). Set to 0 for unlimited (old behavior).
+- Post-search scoring is capped at 200 discoveries per round to avoid spending more time scoring than searching.
+
+**Local convergence benchmarking:**
+- Each worker's local discovery history (best graphs found over time) is a useful optimization signal independent of production leaderboard saturation.
+- **Mini-experiments**: Compare how fast different configs improve their local best score in the first 10-20 minutes. Faster local convergence = more efficient search.
+- **Track per worker**: time-to-first-valid, local best score at 5/10/30 min marks, discovery rate curve over time.
+- **Use for A/B testing**: Run 2 workers with different configs, compare local convergence curves. The steeper curve is the better searcher.
+- **Caveat**: Local convergence measures search efficiency, not absolute quality. Always validate that local improvements translate to production admits.
+- Log mini-experiment findings to journal with tag "LOCAL-BENCHMARK".
 
 ## Decide Phase
 
@@ -170,25 +205,29 @@ curl -sf https://api.extremal.online/api/leaderboards/25/export
 
 IMPORTANT: Always use the direct worker HTTP API, not the CLI `workers set` command (it times out).
 
+CRITICAL: Worker config POST endpoints BLOCK until the current round finishes (can be 5-20+ minutes with ILS polish). ALWAYS use `--max-time 10` on curl commands to avoid blocking. The config change is queued on the server side even if curl times out — you do NOT need to wait for a response.
+
 ```bash
 # 1. Find worker API ports from dashboard relay
-curl -sf http://localhost:4000/api/workers | python3 -c "
+curl -sf --max-time 5 http://localhost:4000/api/workers | python3 -c "
 import json, sys
 for w in json.load(sys.stdin)['workers']:
     print(f'{w[\"worker_id\"]}: {w[\"api_addr\"]}')"
 
 # 2. Adjust params via direct HTTP POST (takes effect next round)
-curl -sf -X POST http://localhost:$PORT/api/config \
+# ALWAYS use --max-time 10 — the request blocks until round ends!
+curl -sf --max-time 10 -X POST http://localhost:$PORT/api/config \
   -H "Content-Type: application/json" \
   -d '{"beam_width": 150, "noise_flips": 2, "sample_bias": 0.4}'
+# Config is queued even if this times out — do NOT retry.
 
-# 3. Check current config
-curl -sf http://localhost:$PORT/api/config | python3 -m json.tool
+# 3. Check current config (also blocks until round boundary)
+curl -sf --max-time 10 http://localhost:$PORT/api/config | python3 -m json.tool
 
-# 4. Pause/resume/stop
-curl -sf -X POST http://localhost:$PORT/api/pause
-curl -sf -X POST http://localhost:$PORT/api/resume
-curl -sf -X POST http://localhost:$PORT/api/stop
+# 4. Pause/resume/stop (also blocks)
+curl -sf --max-time 10 -X POST http://localhost:$PORT/api/pause
+curl -sf --max-time 10 -X POST http://localhost:$PORT/api/resume
+curl -sf --max-time 10 -X POST http://localhost:$PORT/api/stop
 ```
 
 ### Take snapshot

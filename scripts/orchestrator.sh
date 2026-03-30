@@ -53,7 +53,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-CLAUDE_TIMEOUT=900  # 15 min max per claude invocation
+CLAUDE_TIMEOUT=1200  # 20 min max per claude invocation
 
 BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
