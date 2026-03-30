@@ -174,6 +174,14 @@ impl SearchStrategy for Tree2Search {
                 default: serde_json::json!(3),
                 adjustable: true,
             },
+            ConfigParam {
+                name: "max_polish_per_depth".into(),
+                label: "Max Polish Per Depth".into(),
+                description: "Cap polish walks per beam depth level (0=unlimited)".into(),
+                param_type: ParamType::Int { min: 0, max: 100 },
+                default: serde_json::json!(5),
+                adjustable: true,
+            },
         ]
     }
 
@@ -228,6 +236,11 @@ impl SearchStrategy for Tree2Search {
             .get("polish_ils_perturb")
             .and_then(|v| v.as_u64())
             .unwrap_or(3) as u32;
+        let max_polish_per_depth = job
+            .config
+            .get("max_polish_per_depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as u32;
 
         let n = job.n;
         let max_iters = job.max_iters;
@@ -311,6 +324,7 @@ impl SearchStrategy for Tree2Search {
             let mut candidates: Vec<(usize, u32, u32, u64, u64, u64)> = Vec::new();
             let mut dedup_hits: u64 = 0;
             let mut scored_count: u64 = 0;
+            let mut polish_calls: u32 = 0;
             let mut eval_delta_ns: u64 = 0;
             let mut eval_fp_ns: u64 = 0;
             let mut eval_polish_ns: u64 = 0;
@@ -414,25 +428,28 @@ impl SearchStrategy for Tree2Search {
                                 best_valid = Some(valid_graph.clone());
                             }
 
-                            // Polish: ILS with perturbation cycles (or single walk if restarts=0)
-                            let polish_start = Instant::now();
-                            if let Some(polished) = crate::polish::ils_polish(
-                                &valid_graph,
-                                k,
-                                ell,
-                                polish_max_steps,
-                                polish_tabu_tenure,
-                                polish_ils_restarts,
-                                polish_ils_perturb,
-                                &mut known_cids,
-                                observer,
-                                iters_used,
-                                &mut rng,
-                            ) {
-                                discovery_count += 1;
-                                best_valid = Some(polished);
+                            // Polish: ILS with perturbation cycles (capped per depth)
+                            if max_polish_per_depth == 0 || polish_calls < max_polish_per_depth {
+                                polish_calls += 1;
+                                let polish_start = Instant::now();
+                                if let Some(polished) = crate::polish::ils_polish(
+                                    &valid_graph,
+                                    k,
+                                    ell,
+                                    polish_max_steps,
+                                    polish_tabu_tenure,
+                                    polish_ils_restarts,
+                                    polish_ils_perturb,
+                                    &mut known_cids,
+                                    observer,
+                                    iters_used,
+                                    &mut rng,
+                                ) {
+                                    discovery_count += 1;
+                                    best_valid = Some(polished);
+                                }
+                                eval_polish_ns += polish_start.elapsed().as_nanos() as u64;
                             }
-                            eval_polish_ns += polish_start.elapsed().as_nanos() as u64;
                         }
                     }
 
