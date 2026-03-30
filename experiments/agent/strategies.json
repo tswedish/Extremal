@@ -109,29 +109,33 @@
       "date_implemented": "2026-03-30",
       "commit": "pending",
       "notes": "Backward compatible (polish_2opt=false default). Enable via --polish-2opt=true. Overhead: ~2ms/step when stalled (vs ~10μs for 1-opt). Only activates after 10 steps without improvement. Addresses tree2+crossover exhaustion at 4c=(67,67) ceiling. 3 new tests passing (2-opt validity, ILS with 2-opt, zero-restarts equivalence). Available in tree2, crossover, and tabu strategies."
+    },
+    {
+      "id": "sa",
+      "type": "code_change",
+      "description": "Simulated Annealing strategy: traverses through invalid states via probabilistic acceptance to escape the 4c>=67 basin. Composite objective (violations*W + max_4c*100 + min_4c) with linear cooling. At high temp, accepts moves introducing violations if they lower 4-clique counts. At low temp, converges to valid graphs in potentially different quality basins.",
+      "files": ["crates/extremal-strategies/src/sa.rs", "crates/extremal-strategies/src/lib.rs", "crates/extremal-worker/src/main.rs"],
+      "params": {"sa_initial_temp": 10.0, "sa_violation_weight": 10, "polish_max_steps": 100, "polish_tabu_tenure": 25},
+      "status": "untested",
+      "date_implemented": "2026-03-30",
+      "commit": "8e94ebf",
+      "notes": "Addresses exhaustion of all constrained methods (tree2, crossover, 2-opt) at 4c=(67,67). Key difference: SA can cross through 1-2 violation states to reach different valid-graph basins. Select via --strategy sa. 6 new tests (R(3,3)/n=5, R(4,4)/n=17, multiple discoveries, objective math). CLI flags: --sa-initial-temp, --sa-violation-weight. Max 5 polish calls per round."
     }
   ],
   "ideas": [
     {
-      "id": "polish-2opt-config",
-      "description": "Config preset: wide-a base + polish_2opt=true. Tests whether 2-opt paired flips break through the 4c=(67,67) quality ceiling.",
+      "id": "sa-config-tuning",
+      "description": "Tune SA params: initial_temp (5-50), violation_weight (5-50), max_iters (500k-2M). A/B test vs tree2-wide-a on n=25.",
       "priority": "high",
-      "rationale": "Direct test of 2-opt's ability to find graphs unreachable by single-flip polish. Run A/B: wide-a with 2-opt vs wide-a without.",
-      "estimated_effort": "none — just config, code already implemented"
-    },
-    {
-      "id": "ils-polish-config",
-      "description": "Config preset: wide-a base + ILS restarts=3, perturb=3. Tests whether ILS improves scoring quality on top of the best-performing config.",
-      "priority": "high",
-      "rationale": "Direct A/B test: wide-a with ILS vs wide-a without. Should show whether perturbation+re-polish finds better-scoring graphs.",
-      "estimated_effort": "none — just config, code already implemented"
-    },
-    {
-      "id": "crossover-config-tuning",
-      "description": "Tune crossover params: crossover_rate (0.3-0.7), num_offspring (5-20), perturb_flips (4-15). A/B test vs tree2 on n=25.",
-      "priority": "high",
-      "rationale": "Crossover implemented but untested in fleet. Need to find optimal params before declaring it useful or not.",
+      "rationale": "SA implemented but untested in fleet. Need to find optimal temp/weight balance for traversing the invalid-valid boundary productively. Higher temp = more exploration but slower convergence. Lower violation_weight = more invalid traversal.",
       "estimated_effort": "none — config only"
+    },
+    {
+      "id": "sa-with-tabu-hybrid",
+      "description": "Hybrid SA+tabu: use tabu list to prevent revisiting recently flipped edges during SA walk, improving exploration efficiency.",
+      "priority": "medium",
+      "rationale": "Pure random SA may revisit the same edges repeatedly. A short tabu list (tenure ~10-20) would force more diverse exploration without fundamentally changing the SA dynamics.",
+      "estimated_effort": "low — ~30 LOC change to sa.rs"
     },
     {
       "id": "adaptive-polish-depth",
@@ -148,17 +152,10 @@
       "estimated_effort": "low — just config/CLI flag changes"
     },
     {
-      "id": "simulated-annealing-hybrid",
-      "description": "SA with focused edge selection and incremental scoring. Combine SA acceptance criterion with tree2's incremental delta computation.",
-      "priority": "low",
-      "rationale": "SA can accept worsening moves (unlike tree2). But basic SA in experiments crate was untuned. Hybrid could work.",
-      "estimated_effort": "medium — new strategy, ~200 LOC"
-    },
-    {
       "id": "gpu-clique-counting",
       "description": "GPU-accelerated clique counting and candidate evaluation via CUDA or wgpu compute shaders. nvidia GPU available locally.",
-      "priority": "medium",
-      "rationale": "Clique counting is the bottleneck (O(n^5) for k=5). GPU parallelism could speed up beam evaluation and polish by 10-100x, enabling more workers or deeper search per round.",
+      "priority": "low",
+      "rationale": "GPU NOT worthwhile for n=25 (violation_delta=33.6ns, GPU launch=5-10μs). Only revisit for n=40+.",
       "estimated_effort": "high — CUDA FFI or wgpu compute shader, significant engineering"
     },
     {
