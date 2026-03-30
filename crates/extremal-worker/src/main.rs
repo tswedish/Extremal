@@ -325,6 +325,9 @@ async fn main() {
             known_cids_count: 0,
             server_cids_count: 0,
             last_round_ms: 0,
+            best_local_score: None,
+            uptime_secs: 0,
+            last_admitted_at: None,
         },
     };
     let (snapshot_tx, snapshot_rx) = watch::channel(initial_snapshot);

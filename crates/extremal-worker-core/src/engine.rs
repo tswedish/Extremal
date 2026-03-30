@@ -115,6 +115,12 @@ pub struct EngineMetrics {
     pub known_cids_count: usize,
     pub server_cids_count: usize,
     pub last_round_ms: u64,
+    /// Best score bytes found locally (hex-encoded, lower = better).
+    pub best_local_score: Option<String>,
+    /// Elapsed seconds since engine started.
+    pub uptime_secs: u64,
+    /// Timestamp of last admission (ISO 8601).
+    pub last_admitted_at: Option<String>,
 }
 
 // ── Engine-level config params ────────────────────────────
@@ -241,6 +247,9 @@ struct EngineStats {
     known_cids_count: usize,
     server_cids_count: usize,
     last_round_ms: u64,
+    best_local_score: Option<Vec<u8>>,
+    started_at: Instant,
+    last_admitted_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 fn build_snapshot(
@@ -300,6 +309,9 @@ fn build_snapshot(
             known_cids_count: stats.known_cids_count,
             server_cids_count: stats.server_cids_count,
             last_round_ms: stats.last_round_ms,
+            best_local_score: stats.best_local_score.as_ref().map(hex::encode),
+            uptime_secs: stats.started_at.elapsed().as_secs(),
+            last_admitted_at: stats.last_admitted_at.map(|t| t.to_rfc3339()),
         },
     }
 }
@@ -491,6 +503,9 @@ pub async fn run_engine(
         known_cids_count: 0,
         server_cids_count: 0,
         last_round_ms: 0,
+        best_local_score: None,
+        started_at: Instant::now(),
+        last_admitted_at: None,
     };
 
     // Send initial snapshot
@@ -813,6 +828,15 @@ pub async fn run_engine(
             let score = GraphScore::new(histogram, gap, aut_order, cid);
             let score_bytes = score.to_score_bytes(max_k);
 
+            // Track best local score
+            let is_local_best = stats
+                .best_local_score
+                .as_ref()
+                .is_none_or(|best| score_bytes.as_slice() < best.as_slice());
+            if is_local_best {
+                stats.best_local_score = Some(score_bytes.clone());
+            }
+
             // Send unique scored discoveries to dashboard (capped per round)
             if let Some(ref dash) = dashboard
                 && !dash_sent_cids.contains(&cid)
@@ -894,6 +918,7 @@ pub async fn run_engine(
                         server_cids.insert(discovery.cid);
                         if resp.admitted {
                             round_admitted += 1;
+                            stats.last_admitted_at = Some(chrono::Utc::now());
                             if let Some(rank) = resp.rank {
                                 info!(cid = %resp.cid, rank, "admitted");
                             }

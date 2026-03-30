@@ -110,20 +110,24 @@ for i in $(seq 0 $((WORKERS - 1))); do
     LOG="$LOG_DIR/$NAME.log"
     META="{\"worker_id\":\"$NAME\",\"commit\":\"$COMMIT\",\"started\":\"$STARTED\"}"
 
-    FULL_ARGS="--n $N --target-k $TARGET_K --target-ell $TARGET_ELL --max-iters $MAX_ITERS --polish-max-steps $POLISH_MAX_STEPS --polish-tabu-tenure $POLISH_TABU_TENURE --score-bias-threshold $SCORE_BIAS_THRESHOLD $ARGS"
+    # Build global defaults, skipping any flags that per-worker ARGS override
+    GLOBAL_FLAGS=""
+    [[ "$ARGS" != *"--max-iters"* ]] && GLOBAL_FLAGS="$GLOBAL_FLAGS --max-iters $MAX_ITERS"
+    [[ "$ARGS" != *"--polish-max-steps"* ]] && GLOBAL_FLAGS="$GLOBAL_FLAGS --polish-max-steps $POLISH_MAX_STEPS"
+    [[ "$ARGS" != *"--polish-tabu-tenure"* ]] && GLOBAL_FLAGS="$GLOBAL_FLAGS --polish-tabu-tenure $POLISH_TABU_TENURE"
+    [[ "$ARGS" != *"--score-bias-threshold"* ]] && GLOBAL_FLAGS="$GLOBAL_FLAGS --score-bias-threshold $SCORE_BIAS_THRESHOLD"
+
+    FULL_CMD="--n $N --target-k $TARGET_K --target-ell $TARGET_ELL$GLOBAL_FLAGS $ARGS"
     NO_COLOR=1 RUST_LOG=info $BIN \
         --n "$N" \
         --target-k "$TARGET_K" --target-ell "$TARGET_ELL" \
-        --max-iters "$MAX_ITERS" \
-        --polish-max-steps "$POLISH_MAX_STEPS" \
-        --polish-tabu-tenure "$POLISH_TABU_TENURE" \
-        --score-bias-threshold "$SCORE_BIAS_THRESHOLD" \
+        $GLOBAL_FLAGS \
         --server "$SERVER" --dashboard "$DASHBOARD" \
         --metadata "$META" \
         $ARGS \
         > "$LOG" 2>&1 &
     PIDS+=($!)
-    echo "  $NAME (PID $!): $FULL_ARGS"
+    echo "  $NAME (PID $!):$FULL_CMD"
 done
 
 printf '%s\n' "${PIDS[@]}" > "$LOG_DIR/pids"
