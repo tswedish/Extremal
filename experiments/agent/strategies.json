@@ -175,6 +175,17 @@
       "date_implemented": "2026-03-30",
       "commit": "b8beb3e",
       "notes": "Addresses the comprehensive 4c>=67 barrier via corridor exploration between known-good solutions. Select via --strategy relink. CLI flags: --pool-capacity (default 50), --max-violations (default 2). 6 tests passing (pool accumulation, two-graph start, valid intermediates, carry_state, budget, R(4,4)/n=17). Pool accumulates over first ~2 rounds, then starts relinking. Recommended test: 2-4 workers with --strategy relink --n 25 --max-violations 2 --pool-capacity 50. Needs several rounds to build pool from leaderboard seeds."
+    },
+    {
+      "id": "gradient",
+      "type": "code_change",
+      "description": "Two-phase gradient descent: Phase 1 greedily minimizes max(red_4c, blue_4c) via directed edge flips ignoring violations entirely, Phase 2 repairs violations via tabu search. Key difference from SA: directed moves (always picks BEST edge per step) rather than random moves with probabilistic acceptance. Phase separation ensures full-commitment 4c descent before repair, potentially reaching different validity basins.",
+      "files": ["crates/extremal-strategies/src/gradient.rs", "crates/extremal-strategies/src/lib.rs", "crates/extremal-worker/src/main.rs"],
+      "params": {"gradient_descent_steps": 200, "gradient_repair_steps": 5000, "gradient_tabu_tenure": 25, "gradient_perturb_flips": 5, "polish_max_steps": 100, "polish_tabu_tenure": 25},
+      "status": "untested",
+      "date_implemented": "2026-03-30",
+      "commit": "67a6ce3",
+      "notes": "Addresses 4c>=67 barrier from a new angle: directed descent pushes max(4c) far below 67 (at cost of validity), then repair re-establishes validity possibly in a different basin. Select via --strategy gradient. CLI flags: --gradient-descent-steps, --gradient-repair-steps, --gradient-tabu-tenure, --gradient-perturb-flips. 4 tests passing (R(3,3)/n=5, R(4,4)/n=17, discovery reporting, multi-trial). Recommended test: 4-8 workers with --strategy gradient --n 25 --gradient-descent-steps 200 --gradient-repair-steps 5000 --max-iters 500000. Also try varied descent depths (50-500) and perturb_flips (3-10)."
     }
   ],
   "ideas": [
@@ -247,6 +258,13 @@
       "priority": "high",
       "rationale": "On saturated leaderboards, more compute = more chances to find rare better graphs. Check CPU headroom first. Zero code changes needed.",
       "estimated_effort": "none — just --workers 16"
+    },
+    {
+      "id": "gradient-config-tuning",
+      "description": "Tune gradient params: descent_steps (50-500), repair_steps (2k-20k), perturb_flips (0-15), tabu_tenure (10-50). A/B test descent depth: shallow (50 steps, more trials/round) vs deep (500 steps, fewer trials but deeper 4c push). Also test with different seeds (top-1 vs random leaderboard).",
+      "priority": "high",
+      "rationale": "Gradient implemented but untested in fleet. Key tradeoff: deeper descent reaches lower max(4c) but harder to repair back to validity. Shallow descent is closer to current valid-graph space. The sweet spot determines whether directed descent can escape the 4c>=67 basin that all random/constrained methods hit.",
+      "estimated_effort": "none — config only"
     },
     {
       "id": "relink-config-tuning",
