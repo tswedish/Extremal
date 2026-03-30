@@ -210,9 +210,27 @@
       "date_implemented": "2026-03-30",
       "commit": "9e52362",
       "notes": "12th strategy. Fundamentally different approach: no construction, pure refinement. Uses existing ILS polish infrastructure with 22x deeper walks (2000 steps × 11 walks = 22K total vs tree2's ~1000). Select via --strategy refine. 5 tests passing (R(3,3)/n=5, R(4,4)/n=17, discovery reporting, carry_state, invalid-seed skip). Recommended test: 4-8 workers with --strategy refine --n 25 --sample-bias 0.8 --noise-flips 0 --polish-max-steps 2000 --polish-tabu-tenure 50 --polish-ils-restarts 10 --polish-ils-perturb 5 --polish-2opt true. Also try varied tenure (25-100) and restarts (5-20)."
+    },
+    {
+      "id": "template",
+      "type": "code_change",
+      "description": "Template enumeration: analyzes structural backbone shared by top-scoring leaderboard graphs, identifies free edges (edges that differ), then exhaustively or randomly enumerates combinations within that constrained space. Searches BETWEEN known-good solutions rather than locally around any single one.",
+      "files": ["crates/extremal-strategies/src/template.rs", "crates/extremal-strategies/src/lib.rs", "crates/extremal-worker/src/main.rs"],
+      "params": {"template_pool_size": 3, "polish_max_steps": 100, "polish_tabu_tenure": 25},
+      "status": "untested",
+      "date_implemented": "2026-03-30",
+      "commit": "db87e5b",
+      "notes": "13th strategy. Fundamentally different from all existing approaches: uses KNOWN top-scoring graphs to define a search space rather than constructing from scratch or doing local search. Phase 1: accumulates diverse leaderboard seeds across rounds (keeping only best 4c). Phase 2: identifies backbone (fixed edges) and free edges. Phase 3: exhaustive if <=25 free edges (2^25=33M), random sampling otherwise. Polish valid candidates. Select via --strategy template. CLI flag: --template-pool-size (default 3). 6 tests passing (R(3,3)/n=5, R(4,4)/n=17, free edges, partial backbone, carry_state, enumeration validity). Recommended test: 4-8 workers with --strategy template --n 25 --sample-bias 0.3 --template-pool-size 3 --polish-max-steps 100. Use low sample_bias for diverse seeds to fill pool faster."
     }
   ],
   "ideas": [
+    {
+      "id": "template-config-tuning",
+      "description": "Tune template params: pool_size (2-10), sample_bias (0.0-0.5 for diversity vs 0.8-1.0 for quality), polish depth (100-500). A/B test pool-building speed: how many rounds to accumulate 3-8 distinct top-scoring seeds? Also test with noise_flips=0 (exact leaderboard seeds) vs noise_flips=1 (slight variations to increase pool diversity).",
+      "priority": "high",
+      "rationale": "Template implemented but untested in fleet. Key tradeoff: pool_size determines how many free edges the template has (more graphs = more free edges = larger search space but sparser exploration). sample_bias controls seed diversity vs quality. Need to determine if the top graphs' free-edge space contains novel valid graphs at 4c<=65.",
+      "estimated_effort": "none — config only"
+    },
     {
       "id": "seidel-config-tuning",
       "description": "Tune Seidel params: max_switch_size (2-5), random_compositions (1k-50k), and test with different seeds (top-1 vs random leaderboard). Also try size-4 exhaustive (12650 switchings per seed) and pure-random mode (no exhaustive phase, just compositions).",
