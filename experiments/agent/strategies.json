@@ -120,14 +120,32 @@
       "date_implemented": "2026-03-30",
       "commit": "8e94ebf",
       "notes": "Addresses exhaustion of all constrained methods (tree2, crossover, 2-opt) at 4c=(67,67). Key difference: SA can cross through 1-2 violation states to reach different valid-graph basins. Select via --strategy sa. 6 new tests (R(3,3)/n=5, R(4,4)/n=17, multiple discoveries, objective math). CLI flags: --sa-initial-temp, --sa-violation-weight. Max 5 polish calls per round."
+    },
+    {
+      "id": "construct",
+      "type": "code_change",
+      "description": "Greedy construction strategy: builds R(k,l)-valid graphs from scratch via randomized edge-coloring + tabu repair, bypassing Paley-derived basin entirely. Each trial uses a different random edge ordering, producing structurally diverse graphs unreachable by perturbation from fixed seeds.",
+      "files": ["crates/extremal-strategies/src/construct.rs", "crates/extremal-strategies/src/lib.rs", "crates/extremal-worker/src/main.rs"],
+      "params": {"repair_max_iters": 10000, "repair_threshold": 10, "polish_max_steps": 100, "polish_tabu_tenure": 25},
+      "status": "untested",
+      "date_implemented": "2026-03-30",
+      "commit": "7c0f5f7",
+      "notes": "Addresses the comprehensive 4c>=67 barrier. Key difference from all other strategies: does NOT use Paley/leaderboard seeds. Builds graphs edge-by-edge with greedy violation minimization, then tabu-repairs near-valid results. Select via --strategy construct. CLI flags: --repair-max-iters, --repair-threshold. 5 tests passing (R(3,3)/n=5, R(4,4)/n=17, observer, init_graph ignored, seed diversity). Polish integrated (capped at 20/round). Recommended fleet test: 4-8 workers with --strategy construct --repair-threshold 15 --repair-max-iters 20000 --max-iters 500000."
     }
   ],
   "ideas": [
     {
+      "id": "construct-config-tuning",
+      "description": "Tune construct params: repair_threshold (5-30), repair_max_iters (5k-50k), max_iters (200k-2M). A/B test vs tree2-wide-a on n=25.",
+      "priority": "high",
+      "rationale": "Construct implemented but untested in fleet. Need to find optimal repair tolerance and budget. Higher repair_threshold = more near-miss graphs repaired but slower per trial.",
+      "estimated_effort": "none — config only"
+    },
+    {
       "id": "sa-config-tuning",
       "description": "Tune SA params: initial_temp (5-50), violation_weight (5-50), max_iters (500k-2M). A/B test vs tree2-wide-a on n=25.",
-      "priority": "high",
-      "rationale": "SA implemented but untested in fleet. Need to find optimal temp/weight balance for traversing the invalid-valid boundary productively. Higher temp = more exploration but slower convergence. Lower violation_weight = more invalid traversal.",
+      "priority": "low",
+      "rationale": "SA exhausted at n=25 4c>=67 barrier (73K rounds, temps 5-50, zero discoveries). Deprioritized.",
       "estimated_effort": "none — config only"
     },
     {
