@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "description": "Strategy registry for the experiment agent. Each entry is a strategy variant (code change or config preset) with its status and performance data.",
+  "strategies": [
+    {
+      "id": "tree2-wide-a",
+      "type": "config_preset",
+      "description": "Wide beam + moderate noise. Proven best for n=25 admission rate.",
+      "params": {"beam_width": 150, "max_depth": 8, "noise_flips": 2, "sample_bias": 0.4, "polish_max_steps": 100},
+      "status": "validated",
+      "metrics": {"admit_rate_per_min": 19.2, "rounds_tested": 10, "total_admitted": 173},
+      "date_tested": "2026-03-26",
+      "commit": "c2af1f7",
+      "notes": "Dominant config across local and production. 3-7x better than alternatives."
+    },
+    {
+      "id": "tree2-focused",
+      "type": "config_preset",
+      "description": "Focused edge flipping with moderate depth.",
+      "params": {"beam_width": 100, "max_depth": 12, "focused": true, "noise_flips": 1, "sample_bias": 0.5, "polish_max_steps": 100},
+      "status": "validated",
+      "metrics": {"admit_rate_per_min": 6.7, "rounds_tested": 6, "total_admitted": 73},
+      "date_tested": "2026-03-26",
+      "commit": "c2af1f7",
+      "notes": "Second-best. High discovery count but lower admission rate. Different exploration mode."
+    },
+    {
+      "id": "tree2-wide-b",
+      "type": "config_preset",
+      "description": "Very wide beam, low noise.",
+      "params": {"beam_width": 200, "max_depth": 10, "noise_flips": 1, "sample_bias": 0.5, "polish_max_steps": 100},
+      "status": "validated",
+      "metrics": {"admit_rate_per_min": 1.1, "rounds_tested": 5, "total_admitted": 6},
+      "date_tested": "2026-03-26",
+      "commit": "c2af1f7",
+      "notes": "Underperforms wide-a. Too wide without enough noise = less diverse exploration."
+    },
+    {
+      "id": "tree2-deep",
+      "type": "config_preset",
+      "description": "Narrow beam, deep search.",
+      "params": {"beam_width": 60, "max_depth": 18, "noise_flips": 1, "sample_bias": 0.3, "polish_max_steps": 100},
+      "status": "validated",
+      "metrics": {"admit_rate_per_min": 0.5, "rounds_tested": 3, "total_admitted": 3},
+      "date_tested": "2026-03-26",
+      "commit": "c2af1f7",
+      "notes": "Worst performer. Slow rounds, few discoveries."
+    },
+    {
+      "id": "deep-polish",
+      "type": "code_change",
+      "description": "Score-aware tabu walk within valid-graph space. Replaces 3-step greedy polish with 100-500 step tabu walk using incremental 4-clique and triangle deltas.",
+      "files": ["crates/extremal-strategies/src/polish.rs"],
+      "status": "validated",
+      "metrics": {"note": "Enabled all workers to find rank-1 quality graphs. Core improvement."},
+      "date_tested": "2026-03-26",
+      "commit": "c2af1f7",
+      "notes": "Highest-ROI code change. Directly targets scoring quality."
+    },
+    {
+      "id": "carry-state",
+      "type": "code_change",
+      "description": "Cross-round fingerprint dedup persistence via carry_state.",
+      "files": ["crates/extremal-strategies/src/tree2.rs", "crates/extremal-worker-core/src/engine.rs"],
+      "status": "validated",
+      "metrics": {"note": "Prevents re-exploration across rounds. ~15% unique discovery improvement."},
+      "date_tested": "2026-03-26",
+      "commit": "c2af1f7"
+    },
+    {
+      "id": "score-biased-beam",
+      "type": "code_change",
+      "description": "Prefer balanced kc/ei in beam selection when violations are low.",
+      "files": ["crates/extremal-strategies/src/tree2.rs"],
+      "status": "validated",
+      "metrics": {"note": "Steers beam toward regions producing better-scoring valid graphs."},
+      "date_tested": "2026-03-26",
+      "commit": "c2af1f7"
+    },
+    {
+      "id": "ils-polish",
+      "type": "code_change",
+      "description": "Iterated Local Search polish: chain multiple tabu walks separated by random valid-preserving perturbations. Escapes local optima that single walks converge to.",
+      "files": ["crates/extremal-strategies/src/polish.rs", "crates/extremal-strategies/src/tree2.rs", "crates/extremal-worker/src/main.rs"],
+      "params": {"polish_ils_restarts": 3, "polish_ils_perturb": 3},
+      "status": "untested",
+      "date_implemented": "2026-03-26",
+      "commit": "67ac085",
+      "notes": "Backward compatible (restarts=0 = current behavior). Recommended test: restarts=3, perturb=3 with polish_max_steps=100. Expected ~4x polish cost per valid graph but diverse score-space exploration."
+    },
+    {
+      "id": "crossover",
+      "type": "code_change",
+      "description": "Crossover recombination strategy: combines structural features from two parent graphs via uniform edge crossover, then repairs violations using tabu search. Designed to escape tree2's exhausted search space by exploring combinatorial blends of known-good graphs.",
+      "files": ["crates/extremal-strategies/src/crossover.rs", "crates/extremal-strategies/src/lib.rs"],
+      "params": {"crossover_rate": 0.5, "num_offspring": 10, "tabu_tenure": 50, "perturb_flips": 8, "polish_max_steps": 100, "polish_tabu_tenure": 25},
+      "status": "untested",
+      "date_implemented": "2026-03-30",
+      "commit": "pending",
+      "notes": "Addresses tree2 exhaustion finding. Uses carry_state pool to accumulate valid graphs for future crossover parents. First round uses perturbed init_graph as parent B. Select via --strategy crossover. 5 new tests passing (R(3,3)/n=5, R(4,4)/n=17, observer, carry_state, pool reuse)."
+    }
+  ],
+  "ideas": [
+    {
+      "id": "ils-polish-config",
+      "description": "Config preset: wide-a base + ILS restarts=3, perturb=3. Tests whether ILS improves scoring quality on top of the best-performing config.",
+      "priority": "high",
+      "rationale": "Direct A/B test: wide-a with ILS vs wide-a without. Should show whether perturbation+re-polish finds better-scoring graphs.",
+      "estimated_effort": "none — just config, code already implemented"
+    },
+    {
+      "id": "crossover-config-tuning",
+      "description": "Tune crossover params: crossover_rate (0.3-0.7), num_offspring (5-20), perturb_flips (4-15). A/B test vs tree2 on n=25.",
+      "priority": "high",
+      "rationale": "Crossover implemented but untested in fleet. Need to find optimal params before declaring it useful or not.",
+      "estimated_effort": "none — config only"
+    },
+    {
+      "id": "adaptive-polish-depth",
+      "description": "Dynamically adjust polish_max_steps based on how many valid graphs are found per round. More valid graphs = shorter polish per graph.",
+      "priority": "medium",
+      "rationale": "Currently polish depth is fixed. First round finds many valid graphs (slow), later rounds find few (wasted budget). Adaptive would balance.",
+      "estimated_effort": "low — modify engine.rs, ~30 LOC"
+    },
+    {
+      "id": "tabu-strategy-production",
+      "description": "Promote tabu search strategy to production fleet. Currently only tree2 is used in experiments.",
+      "priority": "medium",
+      "rationale": "Tabu explores depth (single trajectory with escape). Complementary to tree2's breadth. Already implemented but untested in fleet.",
+      "estimated_effort": "low — just config/CLI flag changes"
+    },
+    {
+      "id": "simulated-annealing-hybrid",
+      "description": "SA with focused edge selection and incremental scoring. Combine SA acceptance criterion with tree2's incremental delta computation.",
+      "priority": "low",
+      "rationale": "SA can accept worsening moves (unlike tree2). But basic SA in experiments crate was untuned. Hybrid could work.",
+      "estimated_effort": "medium — new strategy, ~200 LOC"
+    },
+    {
+      "id": "multi-flip-perturbation",
+      "description": "Instead of single-edge flips, try k-edge swaps (flip k edges simultaneously). Enables tunneling through barriers.",
+      "priority": "low",
+      "rationale": "Single flips may not reach some valid graphs. Multi-flip could jump between disconnected valid-graph basins.",
+      "estimated_effort": "high — changes to core search loop"
+    },
+    {
+      "id": "gpu-clique-counting",
+      "description": "GPU-accelerated clique counting and candidate evaluation via CUDA or wgpu compute shaders. nvidia GPU available locally.",
+      "priority": "medium",
+      "rationale": "Clique counting is the bottleneck (O(n^5) for k=5). GPU parallelism could speed up beam evaluation and polish by 10-100x, enabling more workers or deeper search per round.",
+      "estimated_effort": "high — CUDA FFI or wgpu compute shader, significant engineering"
+    },
+    {
+      "id": "scale-workers-16",
+      "description": "Run 16 workers simultaneously with known-best config. Pure throughput play.",
+      "priority": "high",
+      "rationale": "On saturated leaderboards, more compute = more chances to find rare better graphs. Check CPU headroom first. Zero code changes needed.",
+      "estimated_effort": "none — just --workers 16"
+    }
+  ]
+}
