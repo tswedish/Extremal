@@ -114,6 +114,14 @@ struct Cli {
     /// Enable 2-opt paired edge flips in polish (escapes single-flip basins).
     #[arg(long, default_value = "false", action = clap::ArgAction::Set)]
     polish_2opt: bool,
+
+    /// SA initial temperature (higher = more exploration through invalid states).
+    #[arg(long, default_value = "10.0")]
+    sa_initial_temp: f64,
+
+    /// SA violation weight in objective (lower = more willing to traverse invalid states).
+    #[arg(long, default_value = "10")]
+    sa_violation_weight: i64,
 }
 
 #[tokio::main]
@@ -174,6 +182,8 @@ async fn main() {
         "polish_ils_restarts": cli.polish_ils_restarts,
         "polish_ils_perturb": cli.polish_ils_perturb,
         "polish_2opt": cli.polish_2opt,
+        "sa_initial_temp": cli.sa_initial_temp,
+        "sa_violation_weight": cli.sa_violation_weight,
     });
 
     // Parse metadata JSON

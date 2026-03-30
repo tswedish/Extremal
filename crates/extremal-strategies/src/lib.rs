@@ -13,6 +13,7 @@
 pub mod crossover;
 pub mod init;
 pub mod polish;
+pub mod sa;
 pub mod tabu;
 pub mod tree2;
 
@@ -24,5 +25,6 @@ pub fn default_strategies() -> Vec<Box<dyn SearchStrategy>> {
         Box::new(tree2::Tree2Search),
         Box::new(tabu::TabuSearch),
         Box::new(crossover::CrossoverSearch),
+        Box::new(sa::SimulatedAnnealing),
     ]
 }
