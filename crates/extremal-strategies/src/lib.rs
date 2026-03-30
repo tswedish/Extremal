@@ -17,6 +17,7 @@ pub mod crossover;
 pub mod init;
 pub mod lns;
 pub mod polish;
+pub mod relink;
 pub mod sa;
 pub mod tabu;
 pub mod tree2;
@@ -34,5 +35,6 @@ pub fn default_strategies() -> Vec<Box<dyn SearchStrategy>> {
         Box::new(circulant::CirculantSearch),
         Box::new(cayley::CayleySearch),
         Box::new(lns::LnsSearch),
+        Box::new(relink::RelinkSearch),
     ]
 }

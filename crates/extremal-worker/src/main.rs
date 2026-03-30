@@ -134,6 +134,14 @@ struct Cli {
     /// LNS: vertices per neighborhood block (4-8). Higher = larger search radius but exponentially more states.
     #[arg(long, default_value = "6")]
     lns_block_size: u64,
+
+    /// Relink: max endpoint graphs to accumulate for path relinking.
+    #[arg(long, default_value = "50")]
+    pool_capacity: u64,
+
+    /// Relink: max violations allowed during path traversal (0 = strict validity).
+    #[arg(long, default_value = "2")]
+    max_violations: u64,
 }
 
 #[tokio::main]
@@ -199,6 +207,8 @@ async fn main() {
         "repair_max_iters": cli.repair_max_iters,
         "repair_threshold": cli.repair_threshold,
         "lns_block_size": cli.lns_block_size,
+        "pool_capacity": cli.pool_capacity,
+        "max_violations": cli.max_violations,
     });
 
     // Parse metadata JSON
