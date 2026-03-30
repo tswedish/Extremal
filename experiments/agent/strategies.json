@@ -142,9 +142,27 @@
       "date_implemented": "2026-03-30",
       "commit": "79650f5",
       "notes": "Fundamentally different approach: algebraic enumeration, not heuristic search. Uses carry_state to skip after first round. Select via --strategy circulant. 7 tests passing (R(3,3)/n=5, R(4,4)/n=17, build correctness x3, carry_state, dedup). Recommended test: single worker with --strategy circulant --n 25 --max-iters 1000000. Completes in one round (~seconds for validity check, longer if many valid graphs found and polished)."
+    },
+    {
+      "id": "lns",
+      "type": "code_change",
+      "description": "Large Neighborhood Search: exhaustive Gray code enumeration of all 2^m edge rewirings within random vertex blocks of size k. Explores distance-15 neighborhoods (k=6) vs radius-1 of all single-flip methods. For k=6: 32768 states per block at ~1ms. Complementary to all existing strategies — finds valid graphs unreachable by single, paired, or SA-based edge flips.",
+      "files": ["crates/extremal-strategies/src/lns.rs", "crates/extremal-strategies/src/lib.rs", "crates/extremal-worker/src/main.rs"],
+      "params": {"lns_block_size": 6, "polish_max_steps": 100, "polish_tabu_tenure": 25},
+      "status": "untested",
+      "date_implemented": "2026-03-30",
+      "commit": "c3a6c9d",
+      "notes": "Addresses structural 4c>=67 barrier by exploring multi-edge neighborhoods exhaustively. Select via --strategy lns. CLI flag: --lns-block-size (default 6, range 4-8). 5 tests passing (R(3,3)/n=5, R(4,4)/n=17, discovery reporting, budget respect, edge count). Recommended test: 4-8 workers with --strategy lns --lns-block-size 6 --max-iters 500000 --n 25. Block sizes: k=5 (1K states/block, many blocks/round), k=6 (32K states/block, ~15 blocks/round at 500K iters), k=7 (2M states/block, slow). Uses Paley graph fallback for cold start, leaderboard seeds in production."
     }
   ],
   "ideas": [
+    {
+      "id": "lns-config-tuning",
+      "description": "Tune LNS block_size (5 vs 6 vs 7) and max_iters (500k-2M). k=5 gives many small blocks (broad sampling), k=6 gives fewer large blocks (deep exploration). A/B test on n=25 production.",
+      "priority": "high",
+      "rationale": "LNS implemented but untested in fleet. The tradeoff between block size and number of blocks explored is crucial. Also test whether LNS from top-scoring leaderboard seeds finds novel 4c<67 graphs.",
+      "estimated_effort": "none — config only"
+    },
     {
       "id": "construct-config-tuning",
       "description": "Tune construct params: repair_threshold (5-30), repair_max_iters (5k-50k), max_iters (200k-2M). A/B test vs tree2-wide-a on n=25.",
