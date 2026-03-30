@@ -153,9 +153,27 @@
       "date_implemented": "2026-03-30",
       "commit": "c3a6c9d",
       "notes": "Addresses structural 4c>=67 barrier by exploring multi-edge neighborhoods exhaustively. Select via --strategy lns. CLI flag: --lns-block-size (default 6, range 4-8). 5 tests passing (R(3,3)/n=5, R(4,4)/n=17, discovery reporting, budget respect, edge count). Recommended test: 4-8 workers with --strategy lns --lns-block-size 6 --max-iters 500000 --n 25. Block sizes: k=5 (1K states/block, many blocks/round), k=6 (32K states/block, ~15 blocks/round at 500K iters), k=7 (2M states/block, slow). Uses Paley graph fallback for cold start, leaderboard seeds in production."
+    },
+    {
+      "id": "cayley",
+      "type": "code_change",
+      "description": "Cayley Z_p×Z_p graph enumeration: exhaustively searches all 2^((p²-1)/2) Cayley graphs of the elementary abelian group Z_p×Z_p for n=p². Different algebraic family from circulant (Z_n). For n=25: 4096 candidates including the Paley graph P(25)≅Cay(GF(25),QR). All graphs are vertex-transitive (|Aut|≥25). One-round exhaustive search with polish on valid discoveries.",
+      "files": ["crates/extremal-strategies/src/cayley.rs", "crates/extremal-strategies/src/lib.rs"],
+      "params": {"polish_max_steps": 100, "polish_tabu_tenure": 25},
+      "status": "untested",
+      "date_implemented": "2026-03-30",
+      "commit": "df18142",
+      "notes": "Fundamentally different algebraic subspace from circulant strategy. Z_5×Z_5 ≠ Z_25 — different automorphism structure, different graph families. The Paley graph P(25) is a Cayley graph of GF(25)≅Z_5×Z_5 over quadratic residues, so this space contains it plus 4095 alternatives. Select via --strategy cayley. 11 tests passing (prime_sqrt, pair enumeration x3, build correctness x2, R(3,3)/n=4, R(4,4)/n=9, non-p² skip, carry_state x2). Recommended test: single worker with --strategy cayley --n 25. Completes in one round (~seconds). Supports n=4,9,25 (p=2,3,5); n=49 (p=7, 16M graphs) skipped as too large."
     }
   ],
   "ideas": [
+    {
+      "id": "cayley-seeds-for-tree2",
+      "description": "Use valid Cayley Z_5×Z_5 graphs as alternative seeds for tree2 beam search. Different algebraic structure may lead to different 4-clique basins than Paley-perturbed seeds.",
+      "priority": "medium",
+      "rationale": "If cayley enumeration finds valid R(5,5) Cayley graphs with different 4-clique distributions, using them as tree2 seeds could escape the Paley basin. Requires cayley strategy to run first.",
+      "estimated_effort": "low — engine init_graph selection + config"
+    },
     {
       "id": "lns-config-tuning",
       "description": "Tune LNS block_size (5 vs 6 vs 7) and max_iters (500k-2M). k=5 gives many small blocks (broad sampling), k=6 gives fewer large blocks (deep exploration). A/B test on n=25 production.",
