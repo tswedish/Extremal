@@ -122,6 +122,14 @@ struct Cli {
     /// SA violation weight in objective (lower = more willing to traverse invalid states).
     #[arg(long, default_value = "10")]
     sa_violation_weight: i64,
+
+    /// Construct: max tabu iterations to repair near-valid constructions.
+    #[arg(long, default_value = "10000")]
+    repair_max_iters: u64,
+
+    /// Construct: max violations to attempt repair (0 = only exact valid).
+    #[arg(long, default_value = "10")]
+    repair_threshold: u64,
 }
 
 #[tokio::main]
@@ -184,6 +192,8 @@ async fn main() {
         "polish_2opt": cli.polish_2opt,
         "sa_initial_temp": cli.sa_initial_temp,
         "sa_violation_weight": cli.sa_violation_weight,
+        "repair_max_iters": cli.repair_max_iters,
+        "repair_threshold": cli.repair_threshold,
     });
 
     // Parse metadata JSON
