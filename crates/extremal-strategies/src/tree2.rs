@@ -540,8 +540,8 @@ impl SearchStrategy for Tree2Search {
             }
 
             let depth_elapsed = depth_start.elapsed();
-            let materialize_ns = depth_elapsed.as_nanos() as u64
-                - eval_delta_ns - eval_fp_ns - eval_polish_ns;
+            let materialize_ns =
+                depth_elapsed.as_nanos() as u64 - eval_delta_ns - eval_fp_ns - eval_polish_ns;
             debug!(
                 depth,
                 beam_size = new_beam.len(),

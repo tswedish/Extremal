@@ -3,7 +3,7 @@
 //! Measures individual hot functions to determine where parallelism
 //! (rayon or GPU) would have the most impact.
 
-use criterion::{Criterion, criterion_group, criterion_main, black_box};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use extremal_scoring::automorphism::canonical_form;
 use extremal_scoring::clique::{
     NeighborSet, count_cliques, count_cliques_through_edge, fast_fingerprint, violation_delta,
@@ -22,9 +22,7 @@ fn setup_n25() -> (NeighborSet, NeighborSet, u32) {
 fn bench_violation_delta_single(c: &mut Criterion) {
     let (adj, comp, _n) = setup_n25();
     c.bench_function("violation_delta/single/n25_k5", |b| {
-        b.iter(|| {
-            violation_delta(black_box(&adj), black_box(&comp), 5, 5, 3, 7)
-        });
+        b.iter(|| violation_delta(black_box(&adj), black_box(&comp), 5, 5, 3, 7));
     });
 }
 
@@ -74,9 +72,7 @@ fn bench_violation_delta_beam_depth(c: &mut Criterion) {
 fn bench_count_cliques_through_edge(c: &mut Criterion) {
     let (adj, _comp, _n) = setup_n25();
     c.bench_function("count_cliques_through_edge/n25_k5", |b| {
-        b.iter(|| {
-            count_cliques_through_edge(black_box(&adj), 5, 3, 7)
-        });
+        b.iter(|| count_cliques_through_edge(black_box(&adj), 5, 3, 7));
     });
 }
 
@@ -143,7 +139,9 @@ fn bench_polish_step_cost(c: &mut Criterion) {
         b.iter(|| {
             for &(u, v) in black_box(&edges) {
                 let (dk, de) = violation_delta(&adj, &comp, 5, 5, u, v);
-                if dk + de != 0 { continue; }
+                if dk + de != 0 {
+                    continue;
+                }
                 violation_delta(&adj, &comp, 4, 4, u, v);
                 violation_delta(&adj, &comp, 3, 3, u, v);
             }
