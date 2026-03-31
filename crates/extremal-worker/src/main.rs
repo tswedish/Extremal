@@ -104,7 +104,7 @@ struct Cli {
     score_bias_threshold: u64,
 
     /// ILS restarts: perturbation+re-polish cycles per valid graph (0 = disabled).
-    #[arg(long, default_value = "0")]
+    #[arg(long, default_value = "3")]
     polish_ils_restarts: u64,
 
     /// ILS perturbation edges: random valid-preserving flips between polish walks.

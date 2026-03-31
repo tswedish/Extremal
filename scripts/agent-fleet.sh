@@ -9,7 +9,7 @@ set -euo pipefail
 
 # ── Defaults ─────────────────────────────────────────────
 WORKERS=8
-N=25
+N=35
 TARGET_K=5
 TARGET_ELL=5
 POLISH_MAX_STEPS=100
@@ -126,8 +126,8 @@ CONFIGS=(
     "wide-d:--beam-width 150 --max-depth 15 --noise-flips 1 --sample-bias 0.5"
     "focused:--beam-width 120 --max-depth 14 --focused true --noise-flips 2 --sample-bias 0.4"
     "explore:--beam-width 100 --max-depth 12 --noise-flips 3 --sample-bias 0.3"
-    "deep-polish:--beam-width 150 --max-depth 10 --noise-flips 2 --sample-bias 0.4 --polish-max-steps 500"
-    "deep-ils:--beam-width 150 --max-depth 10 --noise-flips 2 --sample-bias 0.4 --polish-max-steps 200"
+    "deep-polish:--beam-width 150 --max-depth 10 --noise-flips 2 --sample-bias 0.4 --polish-max-steps 500 --polish-ils-restarts 5"
+    "deep-ils:--beam-width 150 --max-depth 10 --noise-flips 2 --sample-bias 0.4 --polish-max-steps 300 --polish-ils-restarts 5"
 )
 
 # ── Launch ───────────────────────────────────────────────
