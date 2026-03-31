@@ -15,8 +15,14 @@ This skill is loaded as system context by `scripts/loop.sh` and can also be invo
    (30+ min), mark it "ineffective" in strategies.json. Don't keep complexity around "just in case."
 4. **Track everything.** Write to findings.json after every comparison: strategy, config,
    duration, result vs baseline. Check findings before proposing experiments to avoid repeats.
-5. **Search n=35 too.** The n=35 leaderboard may be less saturated, giving clearer signal
-   about strategy effectiveness. Workers can target any n.
+5. **Multiple n values are available.** n=24/28/30 boards are stale from old tabu strategy
+   (March 24) and likely easy to improve. n=35 is active but at ceiling. n=25 is the
+   primary target. Workers can target any n via fleet config.
+6. **Carry-state dedup exhaustion.** After ~2000-5000 rounds with noise_flips≤2, workers
+   exhaust the fingerprint space and produce zero unique output (280ms rounds, skip_thr=0).
+   Fix: set noise_flips=4-6 for long runs, or monitor for this pattern and bump mid-session.
+7. **Throughput beats depth at ceiling.** Reducing polish overhead (100 steps, 3 ILS restarts)
+   increased admission rate ~10x vs deep polish (500 steps, 5 restarts) on saturated boards.
 
 ## Invocation
 
@@ -40,17 +46,20 @@ Four helper scripts handle the mechanical work:
 | Script | Purpose | Usage |
 |--------|---------|-------|
 | `./scripts/loop.sh` | Full agent loop (fleet + observe cycles) | `./scripts/loop.sh --workers 4 --interval 5m` |
-| `./scripts/agent-fleet.sh` | Launch fleet with full hygiene | `./scripts/agent-fleet.sh --workers 4 --n 25 --polish 100` |
+| `./scripts/agent-fleet.sh` | Launch fleet with full hygiene | `./scripts/agent-fleet.sh --workers 4 --n 25 --campaign my-test` |
 | `./scripts/agent-status.sh` | Formatted status report | `./scripts/agent-status.sh [LOG_DIR]` |
 | `./scripts/agent-snapshot.sh` | Leaderboard snapshot | `./scripts/agent-snapshot.sh [N] [SERVER_URL]` |
+| `./scripts/agent-provenance.sh` | Trace entries to commits/configs | `./scripts/agent-provenance.sh 25` |
+| `./scripts/agent-ab-test.sh` | Quick A/B comparison | `./scripts/agent-ab-test.sh --a "..." --b "..."` |
 
 ### agent-fleet.sh handles:
 - Release build
-- Signing key generation + server registration (idempotent)
+- **Per-campaign signing keys** (--campaign NAME creates unique identity on leaderboard)
 - Unique worker_ids from diverse config presets (wide-a/b, focused, deep, explore...)
-- Commit hash + timestamp in metadata
+- Commit hash + timestamp + campaign in metadata
 - config.json with all params + PIDs
 - Signal trapping for graceful shutdown
+- Kills existing workers before launching (prevents duplicates)
 - Optional `--duration 30m` for timed runs
 
 ### agent-status.sh provides:

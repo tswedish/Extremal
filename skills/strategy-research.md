@@ -180,6 +180,27 @@ Output a summary:
 **How to test**: [specific experiment config or fleet params]
 ```
 
+## Available Analysis Tools
+
+Use these scripts to inform your research:
+
+```bash
+# Trace what commit/config produced top leaderboard entries
+./scripts/agent-provenance.sh 25        # n=25, top 20
+./scripts/agent-provenance.sh 35 50     # n=35, top 50
+
+# A/B test a change before committing to full fleet
+./scripts/agent-ab-test.sh --duration 10m \
+  --a "--beam-width 150 --noise-flips 2" \
+  --b "--beam-width 150 --noise-flips 4 --polish-max-steps 500"
+
+# Check fleet status
+./scripts/agent-status.sh
+
+# Leaderboard snapshot
+./scripts/agent-snapshot.sh 25
+```
+
 ## Guidelines
 
 - **One change per research cycle**. Don't try to do everything at once.
@@ -188,6 +209,33 @@ Output a summary:
 - **Measure before and after**. Every change should have a clear metric to evaluate.
 - **Stay on current branch**. The orchestrator expects commits on the active branch.
 - **Don't break existing tests**. `./run ci` must pass after your changes.
+
+## Code Hygiene
+
+**Keep the codebase close to what works.** The strategies crate should contain:
+- **Core strategies** that have produced production admissions (tree2, tabu, polish)
+- **Promising strategies** actively being tested
+- NOT a graveyard of untested ideas
+
+**When adding a strategy:**
+1. Implement it, add tests, commit
+2. The experiment phase tests it in production
+3. If it produces admissions → keep it, document results
+4. If it doesn't after fair testing → **remove the code**, document what was tried in
+   findings.json. Don't leave 600-line files around "just in case."
+
+**When removing a strategy:**
+1. Document in findings.json: what it did, why it was removed, what might make it worth revisiting
+2. Remove from `lib.rs` registration and delete the file
+3. It's still in git history if anyone wants to recover it
+4. Commit: `chore: remove <strategy> — no production admissions after N hours testing (see findings.json)`
+
+**Current state (March 31):** 11 strategy files (6500+ lines) were added by the research
+agent but none produced production admissions. These should be evaluated and cleaned up:
+- Keep: tree2, tabu, polish, init (core, validated)
+- Evaluate: crossover, sa (conceptually promising, need fair A/B test)
+- Remove candidates: cayley, circulant, construct, gradient, lns, refine, relink, seidel, template
+  (all marked "exhausted" without proper testing — preserve findings, remove code)
 
 ## Anti-patterns
 
@@ -199,3 +247,5 @@ Output a summary:
 - Don't conclude tree2 is exhausted without verifying: (a) correct binary was used, (b) ILS
   restarts were enabled, (c) polish was deep enough (500+ steps), (d) ran for 2+ hours
 - Don't add strategies faster than the experiment phase can test them
+- Don't `git add` anything under `experiments/` — it's gitignored
+- Don't leave dead code in the codebase — remove it and document in findings.json

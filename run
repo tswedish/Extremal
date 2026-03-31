@@ -100,6 +100,12 @@ case "$cmd" in
     agent-snapshot)
         ./scripts/agent-snapshot.sh "${EXTRA_ARGS[@]}"
         ;;
+    agent-provenance)
+        ./scripts/agent-provenance.sh "${EXTRA_ARGS[@]}"
+        ;;
+    agent-ab-test)
+        ./scripts/agent-ab-test.sh "${EXTRA_ARGS[@]}"
+        ;;
     migrate)
         cargo run -p extremal-server -- --migrate
         ;;
