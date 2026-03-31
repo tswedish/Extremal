@@ -209,6 +209,30 @@ $PREV_OUTPUT
         fi
     fi
 
+    # Include recent findings and journal for cross-run continuity
+    FINDINGS_SECTION=""
+    if [[ -f "experiments/agent/findings.json" ]]; then
+        FINDINGS_SECTION="
+## Recent Findings (from previous runs — READ for continuity)
+$(cat experiments/agent/findings.json | python3 -c "
+import json, sys
+findings = json.load(sys.stdin)
+for f in findings[-8:]:
+    print(f'- [{f.get(\"date\",\"?\")}] {f[\"finding\"]}')
+" 2>/dev/null || echo '(could not parse findings.json)')"
+    fi
+    JOURNAL_SECTION=""
+    if [[ -f "experiments/agent/journal.md" ]]; then
+        JOURNAL_TAIL=$(tail -30 experiments/agent/journal.md 2>/dev/null || true)
+        if [[ -n "$JOURNAL_TAIL" ]]; then
+            JOURNAL_SECTION="
+## Recent Journal (last 30 lines from previous runs)
+\`\`\`
+$JOURNAL_TAIL
+\`\`\`"
+        fi
+    fi
+
     # Collect inbox messages
     INBOX_DIR="experiments/agent/inbox"
     INBOX_CONTENT=""
@@ -235,6 +259,8 @@ $INBOX_CONTENT"
     PROMPT=$(cat <<PROMPT_EOF
 Run one experiment agent observe-decide-act cycle per the experiment skill protocol.
 $INBOX_SECTION
+$FINDINGS_SECTION
+$JOURNAL_SECTION
 $PREV_CYCLE_SECTION
 
 ## Current Fleet Status
