@@ -49,6 +49,14 @@ echo "  commit: $COMMIT"
 echo "  n=$N workers=$WORKERS polish=$POLISH_MAX_STEPS"
 echo "  logs: $LOG_DIR"
 
+# ── Kill existing workers ────────────────────────────────
+if pgrep -f "extremal-worker" > /dev/null 2>&1; then
+    echo "Stopping existing workers..."
+    pkill -f "extremal-worker" 2>/dev/null || true
+    sleep 2
+    pkill -9 -f "extremal-worker" 2>/dev/null || true
+fi
+
 # ── Build ────────────────────────────────────────────────
 echo "Building release binary..."
 cargo build --release -p extremal-worker 2>&1 | tail -1
