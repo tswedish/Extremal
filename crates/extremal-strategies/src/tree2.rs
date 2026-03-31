@@ -318,6 +318,30 @@ impl SearchStrategy for Tree2Search {
                 discovery_count += 1;
                 best_valid = Some(seed_entry.graph.clone());
             }
+
+            // Polish the seed directly to explore its quality neighborhood.
+            // When seeded from a high-quality leaderboard graph, beam search
+            // often moves away from the seed's local optimum. Direct polish
+            // preserves the seed's structure while searching for improvements.
+            if polish_max_steps > 0
+                && let Some(polished) = crate::polish::ils_polish(
+                    &seed_entry.graph,
+                    k,
+                    ell,
+                    polish_max_steps,
+                    polish_tabu_tenure,
+                    polish_2opt,
+                    polish_ils_restarts,
+                    polish_ils_perturb,
+                    &mut known_cids,
+                    observer,
+                    0,
+                    &mut rng,
+                )
+            {
+                discovery_count += 1;
+                best_valid = Some(polished);
+            }
         }
 
         if seed_entry.violations > 0 {
